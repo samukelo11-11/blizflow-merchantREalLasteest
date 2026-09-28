@@ -1,0 +1,39 @@
+{
+  "users": {
+    "usr-1790587728161-fca5a2ec": {
+      "id": "usr-1790587728161-fca5a2ec",
+      "name": "Sam Merchant",
+      "email": "testmerchant@blizflow.co.za",
+      "password_hash": "$2b$10$sK6.3.HO7MGCMitiaaQ8AeKviLi0G2PgtS5qHea3Rag0BttOGh2UK",
+      "shop_id": "shop-1790587728161-386978e6",
+      "role": "merchant",
+      "created_at": "2026-09-28T09:28:48.161Z"
+    }
+  },
+  "shops": {
+    "shop-1790587728161-386978e6": {
+      "id": "shop-1790587728161-386978e6",
+      "shop_name": "Sipho Spaza",
+      "owner_id": "usr-1790587728161-fca5a2ec",
+      "status": "open",
+      "subscription_status": "trial",
+      "plan": "starter",
+      "trial_ends_at": "2026-10-03T09:28:48.161Z",
+      "created_at": "2026-09-28T09:28:48.161Z",
+      "owner_name": "Sam Merchant"
+    }
+  },
+  "subscriptions": {
+    "sub-1790587728161-af7a326e": {
+      "id": "sub-1790587728161-af7a326e",
+      "user_id": "usr-1790587728161-fca5a2ec",
+      "shop_id": "shop-1790587728161-386978e6",
+      "plan": "starter",
+      "status": "trial",
+      "started_at": "2026-09-28T09:28:48.161Z",
+      "expires_at": "2026-10-03T09:28:48.161Z",
+      "payment_reference": null,
+      "created_at": "2026-09-28T09:28:48.161Z"
+    }
+  }
+}

@@ -1,8 +1,11 @@
 import express from "express";
 import path from "path";
+import cookieParser from "cookie-parser";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import { authenticateUser } from "./server/auth";
+import authRoutes from "./server/authRoutes";
 
 dotenv.config();
 
@@ -11,6 +14,11 @@ const PORT = 3000;
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
+app.use(cookieParser());
+app.use(authenticateUser);
+
+// Mount Custom Authentication API routes
+app.use("/api/auth", authRoutes);
 
 let ai: GoogleGenAI | null = null;
 function getAI() {
