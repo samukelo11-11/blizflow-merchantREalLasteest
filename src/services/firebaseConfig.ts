@@ -9,75 +9,28 @@ import {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONFIG SOURCES
-// Priority: environment variables → JSON applet config → fail loudly
-// The JSON file is only used when env variables are absent (e.g. AI Studio).
-// Never commit the JSON file to a public repository.
+// Priority: environment variables (e.g. Vercel) → JSON applet config (AI Studio)
+// Vite eager glob safely imports the file if present without failing the build if absent.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Attempt to load the applet config — gracefully handle missing file
-let appletConfig: Record<string, string> = {};
-try {
-  // This import is resolved at build time by Vite.
-  // If the file does not exist at this path the build will fail with a
-  // clear "Cannot find module" error rather than a silent runtime failure.
-  const raw = await import('../../firebase-applet-config.json');
-  appletConfig = raw.default || raw;
-} catch {
-  // File not present — will rely on env variables only
-  if (import.meta.env.DEV) {
-    console.info('[firebaseConfig] firebase-applet-config.json not found — using env variables only.');
-  }
-}
+import appletConfigJson from '@/firebase-applet-config.json';
+
+const appletConfig: Record<string, string> = (appletConfigJson as any)?.default || appletConfigJson || {};
 
 function getFirebaseConfig() {
-  // Env variables take priority; fall back to JSON applet config values
-  const apiKey           = import.meta.env.VITE_FIREBASE_API_KEY            || appletConfig.apiKey            || '';
-  const authDomain       = import.meta.env.VITE_FIREBASE_AUTH_DOMAIN        || appletConfig.authDomain        || '';
-  const projectId        = import.meta.env.VITE_FIREBASE_PROJECT_ID         || appletConfig.projectId         || '';
-  const storageBucket    = import.meta.env.VITE_FIREBASE_STORAGE_BUCKET     || appletConfig.storageBucket     || '';
-  const messagingSenderId= import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID|| appletConfig.messagingSenderId || '';
-  const appId            = import.meta.env.VITE_FIREBASE_APP_ID             || appletConfig.appId             || '';
-  const measurementId    = import.meta.env.VITE_FIREBASE_MEASUREMENT_ID     || appletConfig.measurementId     || '';
-  const databaseId       = import.meta.env.VITE_FIREBASE_DATABASE_ID        || appletConfig.firestoreDatabaseId || '(default)';
+  const apiKey            = appletConfig.apiKey            || import.meta.env.VITE_FIREBASE_API_KEY             || '';
+  const authDomain        = appletConfig.authDomain        || import.meta.env.VITE_FIREBASE_AUTH_DOMAIN         || '';
+  const projectId         = appletConfig.projectId         || import.meta.env.VITE_FIREBASE_PROJECT_ID          || '';
+  const storageBucket     = appletConfig.storageBucket     || import.meta.env.VITE_FIREBASE_STORAGE_BUCKET      || '';
+  const messagingSenderId = appletConfig.messagingSenderId || import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '';
+  const appId             = appletConfig.appId             || import.meta.env.VITE_FIREBASE_APP_ID              || '';
+  const measurementId     = appletConfig.measurementId     || import.meta.env.VITE_FIREBASE_MEASUREMENT_ID      || '';
+  const databaseId        = appletConfig.firestoreDatabaseId || import.meta.env.VITE_FIREBASE_DATABASE_ID         || '(default)';
 
-  // Startup diagnostic — always visible in console so you can see
-  // exactly what the app resolved before Firebase is initialised
-  console.info('[firebaseConfig] Resolved config:', {
-    apiKey:      apiKey      ? `${apiKey.substring(0, 8)}...` : 'MISSING',
-    authDomain:  authDomain  || 'MISSING',
-    projectId:   projectId   || 'MISSING',
-    appId:       appId       ? `${appId.substring(0, 12)}...` : 'MISSING',
-    databaseId,
-    source: import.meta.env.VITE_FIREBASE_API_KEY
-      ? 'env variables'
-      : appletConfig.apiKey
-        ? 'applet config JSON'
-        : 'NONE — will fail',
-  });
-
-  const isValid =
-    !!apiKey &&
-    apiKey !== 'mock-api-key' &&
-    apiKey !== 'unconfigured' &&
-    apiKey.trim() !== '' &&
-    !!projectId &&
-    !!appId;
+  const isValid = !!apiKey && apiKey !== 'mock-api-key' && apiKey !== 'unconfigured' && !!projectId && !!appId;
 
   if (!isValid) {
-    const missing: string[] = [];
-    if (!apiKey || apiKey === 'mock-api-key' || apiKey === 'unconfigured') missing.push('FIREBASE_API_KEY');
-    if (!projectId) missing.push('FIREBASE_PROJECT_ID');
-    if (!appId)     missing.push('FIREBASE_APP_ID');
-    if (!authDomain) missing.push('FIREBASE_AUTH_DOMAIN');
-
-    console.error(
-      '[firebaseConfig] ❌ Firebase credentials missing or invalid.',
-      '\nMissing:', missing.join(', '),
-      '\nFix: set VITE_* environment variables or provide a valid firebase-applet-config.json at the project root.'
-    );
-
-    // Return placeholder so the module loads without crashing.
-    // isFirebaseConfigured() returns false so callers can gate on it.
+    console.error('[firebaseConfig] Missing environment variables. Set VITE_FIREBASE_* in Vercel or environment.');
     return {
       apiKey:            'unconfigured',
       authDomain:        'unconfigured.firebaseapp.com',
@@ -94,10 +47,9 @@ function getFirebaseConfig() {
 }
 
 const { databaseId, ...firebaseConfig } = getFirebaseConfig();
-const app  = initializeApp(firebaseConfig);
+const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 
-// Firestore — persistent cache only in browser environments
 const firestoreSettings: FirestoreSettings = { ignoreUndefinedProperties: true };
 if (typeof window !== 'undefined') {
   firestoreSettings.localCache = persistentLocalCache({
@@ -105,8 +57,6 @@ if (typeof window !== 'undefined') {
   });
 }
 export const db = initializeFirestore(app, firestoreSettings, databaseId);
-
-// ── Operation types ──────────────────────────────────────────────────────────
 
 export enum OperationType {
   CREATE = 'create',
@@ -123,10 +73,10 @@ export interface FirestoreErrorInfo {
   operationType: OperationType;
   path: string | null;
   authInfo: {
-    userId?:       string | null;
-    emailMasked?:  string | null;
+    userId?:        string | null;
+    emailMasked?:   string | null;
     emailVerified?: boolean | null;
-    isAnonymous?:  boolean | null;
+    isAnonymous?:   boolean | null;
   };
 }
 

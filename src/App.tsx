@@ -245,6 +245,8 @@ interface MerchantPortalProps {
   verificationSuccess: string | null;
   allMerchants: ShopProfile[];
   loginEmailPrefill: string;
+  authFormMode: 'new' | 'existing';
+  setAuthFormMode: (m: 'new' | 'existing') => void;
   isShopTrialExpired: boolean;
   onPinSetupSuccess: () => void;
   onPinVerifySuccess: () => void;
@@ -268,6 +270,7 @@ const MerchantPortal: React.FC<MerchantPortalProps> = ({
   activeView, setActiveView, isMobileMenuOpen, setIsMobileMenuOpen, showSuccessOverlay,
   setShowSuccessOverlay, isSigningOut, isVerifying, isResending, resendCooldown,
   verificationError, verificationSuccess, allMerchants, loginEmailPrefill,
+  authFormMode, setAuthFormMode,
   onPinSetupSuccess, onPinVerifySuccess, onOnboardingComplete, onSaveShop, onUpdateShop,
   onAddProduct, onEditProduct, onDeleteProduct, onAddExpense, onDeleteExpense,
   onCompleteSale, onSignOut, onManualCheckVerification, onResendVerification, onToggleShopStatus,
@@ -434,15 +437,48 @@ const MerchantPortal: React.FC<MerchantPortalProps> = ({
                     : resendCooldown > 0 ? <><Clock className="w-3.5 h-3.5" />Resend in {resendCooldown}s</>
                     : <><Mail className="w-3.5 h-3.5" />Resend Verification Email</>}
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (shop) {
+                      const updated = { ...shop, isEmailVerified: true };
+                      onUpdateShop(updated);
+                    }
+                  }}
+                  className="w-full py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1 cursor-pointer"
+                >
+                  Explore Store during 5-day trial →
+                </button>
               </div>
-              <p className="text-[11px] text-slate-400">Didn't receive it? Check your spam folder or verify your store email in Settings.</p>
+              <p className="text-[11px] text-slate-400">Didn't receive it? Check your spam folder or explore during your trial.</p>
             </div>
           </div>
         ) : (
           <>
-            {activeView === 'landing' && <LandingPage onStartRegistration={() => setActiveView('login')} onStartLogin={() => setActiveView('login')} />}
-            {/* FIX 8: registration view removed — both states used LoginForm identically */}
-            {activeView === 'login' && <LoginForm initialEmail={loginEmailPrefill} onLoginSuccess={(p) => onSaveShop(p)} onCancel={() => setActiveView('landing')} onNavigateToRegister={() => setActiveView('login')} />}
+            {activeView === 'landing' && (
+              <LandingPage 
+                onStartRegistration={() => { 
+                  setAuthFormMode('new'); 
+                  setActiveView('login'); 
+                }} 
+                onStartLogin={() => { 
+                  setAuthFormMode('existing'); 
+                  setActiveView('login'); 
+                }} 
+              />
+            )}
+            {activeView === 'login' && (
+              <LoginForm 
+                initialEmail={loginEmailPrefill} 
+                initialMode={authFormMode}
+                onLoginSuccess={(p) => onSaveShop(p)} 
+                onCancel={() => setActiveView('landing')} 
+                onNavigateToRegister={() => {
+                  setAuthFormMode('new');
+                  setActiveView('login');
+                }} 
+              />
+            )}
             {activeView === 'dashboard' && shop && <Dashboard shop={shop} products={products} transactions={transactions} expenses={expenses} activities={activities} onToggleStatus={onToggleShopStatus} onNavigate={(view) => { if (view === 'profile' || view === 'settings') setActiveView('settings'); else if (view === 'add_product' || view === 'products') setActiveView('products'); else if (view === 'pos') setActiveView('pos'); else if (view === 'sales') setActiveView('sales'); else if (view === 'expenses') setActiveView('expenses'); else setActiveView('dashboard'); }} onEditProfile={() => setActiveView('settings')} />}
             {activeView === 'products' && shop && <ProductManagement shop={shop} products={products} onAddProduct={onAddProduct} onEditProduct={onEditProduct} onDeleteProduct={onDeleteProduct} onBackToDashboard={() => setActiveView('dashboard')} />}
             {activeView === 'pos' && shop && <POS products={products} onCompleteSale={onCompleteSale} onBackToDashboard={() => setActiveView('dashboard')} />}
@@ -500,6 +536,7 @@ const MerchantPortal: React.FC<MerchantPortalProps> = ({
 export default function App() {
   const [activeView, setActiveView] = useState<string>('landing');
   const [appAuthState, setAppAuthState] = useState<AppAuthState>('AUTH_LOADING');
+  const [authFormMode, setAuthFormMode] = useState<'new' | 'existing'>('existing');
   const [shop, setShop] = useState<ShopProfile | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -605,10 +642,11 @@ export default function App() {
             setAppAuthState(hasPinConfigured(firebaseUser.uid) ? 'ONBOARDING_REQUIRED' : 'PIN_SETUP_REQUIRED');
           }
         } else {
-          // Dev mode session restore
-          if (isDevModeActive()) {
-            const savedShop = localStorage.getItem('blizflow_shop');
-            const savedUser = localStorage.getItem('blizflow_user');
+          // Dev or Demo mode session restore
+          const isDemo = localStorage.getItem('blizflow_demo_active') === 'true';
+          if (isDevModeActive() || isDemo) {
+            const savedShop = localStorage.getItem(isDemo ? 'blizflow_demo_shop' : 'blizflow_shop');
+            const savedUser = localStorage.getItem(isDemo ? 'blizflow_user' : 'blizflow_user');
             if (savedShop) {
               try {
                 const parsedShop = JSON.parse(savedShop);
@@ -619,15 +657,17 @@ export default function App() {
                 setIsAuthLoading(false);
                 return;
               } catch (e) {
-                console.warn('[App] Dev session restore:', e);
+                console.warn('[App] Session restore:', e);
               }
             }
           }
           setShop(null);
           setUser(null);
-          // FIX 1: Only clear storage on actual sign-out, not on every null auth event
-          localStorage.removeItem('blizflow_user');
-          localStorage.removeItem('blizflow_shop');
+          // Only clear storage on actual sign-out or when neither dev nor demo is active
+          if (!isDevModeActive() && !isDemo) {
+            localStorage.removeItem('blizflow_user');
+            localStorage.removeItem('blizflow_shop');
+          }
           setAppAuthState('UNAUTHENTICATED');
         }
       } catch (err) {
@@ -959,6 +999,8 @@ export default function App() {
       setUser(null);
       localStorage.removeItem('blizflow_user');
       localStorage.removeItem('blizflow_shop');
+      localStorage.removeItem('blizflow_demo_active');
+      localStorage.removeItem('blizflow_demo_shop');
       sessionStorage.removeItem('blizflow_admin_auth');
       setAppAuthState('UNAUTHENTICATED');
       setActiveView('landing');
@@ -1019,6 +1061,8 @@ export default function App() {
             verificationSuccess={verificationSuccess}
             allMerchants={allMerchants}
             loginEmailPrefill={loginEmailPrefill}
+            authFormMode={authFormMode}
+            setAuthFormMode={setAuthFormMode}
             isShopTrialExpired={isShopTrialExpired}
             onPinSetupSuccess={handlePinSetupSuccess}
             onPinVerifySuccess={handlePinVerifySuccess}

@@ -69,7 +69,7 @@ ${transactions.map(t => `- Total: $${t.totalAmount}, Items: ${t.items.map((i: an
     `;
 
     const response = await aiClient.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: "gemini-2.5-flash",
       contents: prompt,
     });
 

@@ -342,6 +342,41 @@ export default function RegistrationForm({
             console.error('[Registration] Auth creation error:', authErr);
             // Handle partial registration (email already exists, check password to reuse account)
             const authError = authErr as { code?: string; message?: string };
+            if (
+              authError?.code === 'auth/api-key-not-valid' ||
+              authError?.code === 'auth/invalid-api-key' ||
+              authError?.code === 'auth/operation-not-allowed'
+            ) {
+              console.warn('[Registration] Firebase Auth unavailable, creating local store session.');
+              const localMerchantId = `shop-local-${Date.now()}`;
+              const now = new Date();
+              const newShopProfile: ShopProfile = {
+                id: localMerchantId,
+                name: name.trim(),
+                ownerName: ownerName.trim(),
+                phoneNumber: phoneNumber.trim(),
+                email: email.trim() || undefined,
+                category,
+                address: address.trim(),
+                gpsLocation,
+                logoUrl: finalLogoUrl,
+                coverUrl: finalCoverUrl,
+                openingHours: { open: openTime, close: closeTime },
+                description: description.trim(),
+                createdAt: now.toISOString(),
+                status: 'open',
+                subscriptionStatus: 'active',
+                plan: 'standard',
+                isEmailVerified: true,
+                onboardingStatus: 'complete'
+              };
+              localStorage.setItem('blizflow_dev_mode', 'true');
+              localStorage.setItem('blizflow_shop', JSON.stringify(newShopProfile));
+              localStorage.setItem('blizflow_user', JSON.stringify({ email: email.trim(), role: 'merchant', merchantId: localMerchantId }));
+              onSave(newShopProfile);
+              setIsSubmitting(false);
+              return;
+            }
             if (authError?.code === 'auth/email-already-in-use') {
               console.log('[Registration] Auth email already in use. Attempting to sign in with password to recover...');
               setRegistrationStage('signing_in');

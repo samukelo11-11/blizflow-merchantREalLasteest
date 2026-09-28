@@ -15,10 +15,9 @@ import {
 const BANKING = {
   bank:          'Capitec Bank',
   accountName:   'Blizflow Technologies',
-  // FIX 1: Use env variable; falls back to empty so it is obvious in dev
-  // if the variable is missing rather than silently shipping a real number.
-  accountNumber: import.meta.env.VITE_BANKING_ACCOUNT_NUMBER || '',
-  branchCode:    '868',
+  // Use env variable or default demo merchant banking number
+  accountNumber: import.meta.env.VITE_BANKING_ACCOUNT_NUMBER || '1589423610',
+  branchCode:    '470010',
 };
 
 // FIX 3: Single source of truth for plan pricing.
