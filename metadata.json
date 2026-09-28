@@ -1,0 +1,8 @@
+{
+  "name": "Remix BlizFlow MerchantREAL",
+  "description": "A professional portal for local businesses to register shops, manage product inventory, and monitor stock through a clean dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

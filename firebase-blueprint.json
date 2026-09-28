@@ -1,0 +1,197 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Maps Firebase Auth UID to merchant profile and role",
+      "type": "object",
+      "properties": {
+        "merchantId": {
+          "type": "string",
+          "description": "Unique identifier of the associated merchant"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["merchant", "admin"],
+          "description": "Role of the user in the system"
+        }
+      },
+      "required": ["merchantId", "role"]
+    },
+
+    "Merchant": {
+      "title": "Merchant",
+      "description": "Shop profile and subscription record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "ownerName": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "email": { "type": "string" },
+        "category": { "type": "string" },
+        "address": { "type": "string" },
+        "description": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "coverUrl": { "type": "string" },
+        "openingHours": {
+          "type": "object",
+          "properties": {
+            "open": {
+              "type": "string",
+              "pattern": "^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$"
+            },
+            "close": {
+              "type": "string",
+              "pattern": "^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$"
+            }
+          },
+          "required": ["open", "close"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["open", "closed"]
+        },
+        "subscriptionStatus": {
+          "type": "string",
+          "enum": ["trial", "active", "payment_pending", "rejected", "suspended", "expired"]
+        },
+        "plan": {
+          "type": "string",
+          "enum": ["starter", "growth", "pro"],
+          "description": "Subscription plan tier"
+        },
+        "subscriptionPrice": {
+          "type": "number",
+          "description": "Monthly price in ZAR"
+        },
+        "trialEndsAt": { "type": "string", "format": "date-time" },
+        "subscriptionStartedAt": { "type": "string", "format": "date-time" },
+        "nextRenewalDate": { "type": "string", "format": "date-time" },
+        "paymentMethod": {
+          "type": "string",
+          "enum": ["eft", "payfast", "card"]
+        },
+        "paymentSubmittedAt": { "type": "string", "format": "date-time" },
+        "rejectionReason": { "type": "string" },
+        "isEmailVerified": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id", "name", "ownerName", "phoneNumber", "email",
+        "subscriptionStatus", "plan", "subscriptionPrice", "createdAt"
+      ]
+    },
+
+    "Product": {
+      "title": "Product",
+      "description": "Inventory product item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "price": { "type": "number", "minimum": 0 },
+        "stock": { "type": "integer", "minimum": 0 },
+        "category": { "type": "string" },
+        "description": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "isActive": {
+          "type": "boolean",
+          "description": "Whether the product is available for sale"
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "price", "stock", "isActive", "createdAt"]
+    },
+
+    "SaleItem": {
+      "title": "SaleItem",
+      "description": "Individual line item within a sale transaction",
+      "type": "object",
+      "properties": {
+        "productId": { "type": "string" },
+        "productName": {
+          "type": "string",
+          "description": "Denormalised name at time of sale — preserved if product is renamed or deleted"
+        },
+        "quantity": { "type": "integer", "minimum": 1 },
+        "unitPrice": { "type": "number", "minimum": 0 },
+        "subtotal": { "type": "number", "minimum": 0 }
+      },
+      "required": ["productId", "productName", "quantity", "unitPrice", "subtotal"]
+    },
+
+    "Sale": {
+      "title": "Sale",
+      "description": "Completed point of sale transaction",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "items": {
+          "type": "array",
+          "items": { "$ref": "#/entities/SaleItem" },
+          "minItems": 1,
+          "description": "Line items sold in this transaction"
+        },
+        "totalAmount": { "type": "number", "minimum": 0 },
+        "paymentMethod": {
+          "type": "string",
+          "enum": ["cash", "card", "snapscan", "other"]
+        },
+        "note": {
+          "type": "string",
+          "description": "Optional cashier note on the transaction"
+        },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "items", "totalAmount", "paymentMethod", "createdAt"]
+    },
+
+    "Expense": {
+      "title": "Expense",
+      "description": "Shop operational expense record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "category": { "type": "string" },
+        "amount": { "type": "number", "minimum": 0 },
+        "date": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO timestamp when expense was incurred"
+        },
+        "note": { "type": "string" },
+        "receiptUrl": {
+          "type": "string",
+          "description": "Optional Firebase Storage URL of uploaded receipt"
+        },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "category", "amount", "date", "createdAt"]
+    }
+  },
+
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Maps Auth UIDs to merchant identity and access role"
+    },
+    "/merchants/{merchantId}": {
+      "schema": "Merchant",
+      "description": "Shop profile and subscription state"
+    },
+    "/merchants/{merchantId}/products/{productId}": {
+      "schema": "Product",
+      "description": "Merchant-scoped inventory. Security rules inherit from parent merchant document."
+    },
+    "/merchants/{merchantId}/sales/{saleId}": {
+      "schema": "Sale",
+      "description": "Merchant-scoped transaction records"
+    },
+    "/merchants/{merchantId}/expenses/{expenseId}": {
+      "schema": "Expense",
+      "description": "Merchant-scoped operational costs"
+    }
+  }
+}

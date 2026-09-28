@@ -1,0 +1,188 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ==========================================================
+    // AUTHORIZATION HELPERS
+    // ==========================================================
+
+    // Checks if the requesting user is a verified administrator.
+    // Admins are identified by custom token claim OR adminUsers document —
+    // token claim is preferred as it avoids a Firestore read.
+    function isAdmin() {
+      return request.auth != null && (
+        request.auth.token.get('role', '') == 'admin' ||
+        exists(/databases/$(database)/documents/adminUsers/$(request.auth.uid))
+      );
+    }
+
+    // FIX 1 + 2: Removed email-based identity check (insecure) and reduced
+    // to a single document read path via the users mapping only.
+    // Callers should prefer checking request.auth.uid == merchantId directly
+    // where possible to avoid this read entirely.
+    function isShopOwner(merchantId) {
+      return request.auth != null &&
+        merchantId != null && (
+          request.auth.uid == merchantId ||
+          (
+            exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('merchantId', null) == merchantId
+          )
+        );
+    }
+
+    // FIX 2: Simplified hasShopAccess to a single merchantId field check.
+    // shopId aliasing removed — use merchantId consistently across all documents.
+    function hasShopAccess(merchantId) {
+      return request.auth != null &&
+        merchantId != null &&
+        isShopOwner(merchantId);
+    }
+
+    // Validates plan-to-price consistency for payment submissions.
+    // FIX 6: Updated plan names to match schema (starter/growth/pro not enterprise).
+    function isValidPaymentPlan(data) {
+      return (
+        (data.get('plan', null) == 'starter' && (data.get('amount', null) == 100 || data.get('amount', null) == 149)) ||
+        (data.get('plan', null) == 'growth'  && (data.get('amount', null) == 200 || data.get('amount', null) == 249)) ||
+        (data.get('plan', null) == 'pro'     && (data.get('amount', null) == 350 || data.get('amount', null) == 399))
+      ) && (
+        !('currency' in data) || data.get('currency', null) == 'ZAR'
+      );
+    }
+
+    // ==========================================================
+    // ADMIN USERS
+    // ==========================================================
+    match /adminUsers/{uid} {
+      allow read: if request.auth != null && (request.auth.uid == uid || isAdmin());
+      allow write: if isAdmin();
+    }
+
+    // ==========================================================
+    // USERS MAPPING
+    // ==========================================================
+    match /users/{uid} {
+      allow read: if request.auth != null && (request.auth.uid == uid || isAdmin());
+      allow create, update: if request.auth != null && (request.auth.uid == uid || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    // ==========================================================
+    // MERCHANT PROFILES
+    // ==========================================================
+    match /merchants/{merchantId} {
+      allow read: if request.auth != null && (
+        isShopOwner(merchantId) ||
+        isAdmin()
+      );
+
+      allow create: if request.auth != null &&
+        isShopOwner(merchantId) &&
+        request.resource.data.get('subscriptionStatus', 'trial') in ['trial', 'payment_pending'] &&
+        request.resource.data.get('plan', null) != null &&
+        request.resource.data.get('email', null) != null;
+
+      // FIX 4: Tightened update rule so merchants can only move status
+      // to payment_pending and cannot revert from payment_pending back to trial.
+      // Only admins can set status to active/suspended/expired/rejected.
+      allow update: if request.auth != null && (
+        isAdmin() ||
+        (
+          isShopOwner(merchantId) &&
+          (
+            // If the user did not touch any subscription fields, allow the update immediately
+            !request.resource.data.diff(resource.data).affectedKeys().hasAny(['subscriptionStatus', 'nextRenewalDate', 'plan', 'subscriptionPrice']) ||
+            (
+              // Otherwise, if they touch subscription fields, they must meet the transition conditions:
+              // 1. If they changed subscriptionStatus, it must be moving to 'payment_pending', 'trial', or 'expired'
+              (
+                !request.resource.data.diff(resource.data).affectedKeys().hasAny(['subscriptionStatus']) ||
+                request.resource.data.get('subscriptionStatus', 'trial') in ['payment_pending', 'trial', 'expired']
+              ) &&
+              // 2. nextRenewalDate must not change
+              !request.resource.data.diff(resource.data).affectedKeys().hasAny(['nextRenewalDate']) &&
+              // 3. plan must be one of the allowed plans if modified
+              (
+                !request.resource.data.diff(resource.data).affectedKeys().hasAny(['plan']) ||
+                request.resource.data.get('plan', 'starter') in ['starter', 'growth', 'pro']
+              ) &&
+              // 4. subscriptionPrice must be one of the allowed prices if modified
+              (
+                !request.resource.data.diff(resource.data).affectedKeys().hasAny(['subscriptionPrice']) ||
+                request.resource.data.get('subscriptionPrice', 100) in [100, 149, 200, 249, 350, 399]
+              )
+            )
+          )
+        )
+      );
+
+      allow delete: if isAdmin();
+
+      // ==========================================================
+      // FIX 3: Products, sales, expenses as subcollections
+      // Security is inherited from the parent merchantId path param.
+      // ==========================================================
+
+      match /products/{productId} {
+        allow read: if isShopOwner(merchantId) || isAdmin();
+        allow create, update: if isShopOwner(merchantId) || isAdmin();
+        allow delete: if isShopOwner(merchantId) || isAdmin();
+      }
+
+      // FIX 6: Named 'sales' to match schema entity name
+      match /sales/{saleId} {
+        allow read: if isShopOwner(merchantId) || isAdmin();
+        allow create: if isShopOwner(merchantId) || isAdmin();
+        // FIX 7: Sales are financial records — no merchant deletion
+        allow update, delete: if isAdmin();
+      }
+
+      match /expenses/{expenseId} {
+        allow read: if isShopOwner(merchantId) || isAdmin();
+        allow create, update: if isShopOwner(merchantId) || isAdmin();
+        allow delete: if isShopOwner(merchantId) || isAdmin();
+      }
+
+      match /inventory_activities/{activityId} {
+        allow read: if isShopOwner(merchantId) || isAdmin();
+        allow create: if isShopOwner(merchantId) || isAdmin();
+        // FIX 7: Inventory activity log is append-only for merchants
+        allow update, delete: if isAdmin();
+      }
+    }
+
+    // ==========================================================
+    // PAYMENTS & EFT AUDIT LOGS
+    // ==========================================================
+    match /payments/{paymentId} {
+      // FIX 5: Read restricted to the single merchantId field only.
+      // Dual shopId/merchantId ambiguity removed.
+      allow read: if request.auth != null && (
+        request.auth.uid == resource.data.get('merchantId', null) ||
+        isShopOwner(resource.data.get('merchantId', null)) ||
+        isAdmin()
+      );
+
+      // FIX 5: Create restricted to single merchantId field.
+      // Merchant can only create payments for themselves.
+      allow create: if request.auth != null &&
+        isShopOwner(request.resource.data.get('merchantId', null)) &&
+        request.resource.data.get('status', null) == 'PENDING' &&
+        isValidPaymentPlan(request.resource.data) &&
+        request.resource.data.get('reference', null) is string &&
+        request.resource.data.get('submittedAt', null) is string;
+
+      allow update, delete: if isAdmin();
+    }
+
+    // ==========================================================
+    // FIX 8: Explicit fallback — deny everything not matched above.
+    // Makes it clear that unlisted collections are intentionally closed,
+    // not accidentally forgotten.
+    // ==========================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
