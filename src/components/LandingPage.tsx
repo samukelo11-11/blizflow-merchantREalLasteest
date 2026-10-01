@@ -4,6 +4,7 @@
  */
 
 import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { 
   Store, 
   ShoppingCart, 
@@ -213,12 +214,12 @@ export default function LandingPage({ onLoginSuccess, onStartAdmin }: LandingPag
           <span>© {new Date().getFullYear()}</span>
         </div>
         <div className="flex items-center gap-4 mt-3 sm:mt-0">
-          <a
-            href="/admin/login"
+          <Link
+            to="/admin/login"
             className="text-slate-400 hover:text-slate-700 text-[11px] font-semibold transition"
           >
             Admin Console
-          </a>
+          </Link>
         </div>
       </footer>
 
