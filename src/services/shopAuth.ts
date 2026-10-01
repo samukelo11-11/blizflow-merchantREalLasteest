@@ -8,6 +8,23 @@
  */
 
 import { ShopProfile } from '../types';
+import { db } from './firebaseConfig';
+import { doc, getDoc } from 'firebase/firestore';
+
+async function safeParseJson(res: Response): Promise<any> {
+  const text = await res.text().catch(() => '');
+  if (!text) {
+    return { success: res.ok };
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    if (!res.ok) {
+      throw new Error(text || `Server returned ${res.status} ${res.statusText}`);
+    }
+    return { success: false, error: text };
+  }
+}
 
 export interface ShopSessionResponse {
   authenticated: boolean;
@@ -48,23 +65,70 @@ export async function verifyShopAccess(
       body: JSON.stringify({ shopId: cleanShopId, pin: cleanPin })
     });
 
-    const data = await res.json();
+    const data = await safeParseJson(res);
 
-    if (!res.ok || !data.success) {
+    if (res.ok && data.success && data.shop) {
       return {
-        success: false,
-        reason: data.reason || 'ERROR',
-        message: data.message || 'Verification failed. Please try again.'
+        success: true,
+        shopId: data.shopId,
+        shop: normalizeShopProfile(data.shop)
       };
     }
 
+    if (data.reason && data.message) {
+      return {
+        success: false,
+        reason: data.reason,
+        message: data.message
+      };
+    }
+  } catch (err: any) {
+    console.warn('[shopAuth] Backend verify-pin check unavailable, falling back to Firestore:', err.message);
+  }
+
+  // Fallback to Firestore directly (supports Netlify and static deployments)
+  try {
+    const snap = await getDoc(doc(db, 'merchants', cleanShopId));
+    if (!snap.exists()) {
+      return {
+        success: false,
+        reason: 'NOT_FOUND',
+        message: `Shop "${cleanShopId}" not found. Please verify your Shop ID.`
+      };
+    }
+
+    const data = snap.data();
+    if (data.status === 'suspended') {
+      return {
+        success: false,
+        reason: 'INACTIVE',
+        message: 'This shop has been suspended. Please contact support.'
+      };
+    }
+    if (data.status === 'pending') {
+      return {
+        success: false,
+        reason: 'INACTIVE',
+        message: 'This shop is pending activation by an administrator.'
+      };
+    }
+    if (data.pin && String(data.pin).trim() !== cleanPin) {
+      return {
+        success: false,
+        reason: 'WRONG_PIN',
+        message: 'Incorrect PIN. Please try again.'
+      };
+    }
+
+    const shopProfile = normalizeShopProfile({ id: snap.id, ...data });
+    localStorage.setItem('blizflow_shop', JSON.stringify(shopProfile));
     return {
       success: true,
-      shopId: data.shopId,
-      shop: normalizeShopProfile(data.shop)
+      shopId: cleanShopId,
+      shop: shopProfile
     };
-  } catch (err: any) {
-    console.error('[shopAuth] verifyShopAccess error:', err);
+  } catch (fsErr: any) {
+    console.error('[shopAuth] Firestore verify fallback error:', fsErr);
     return {
       success: false,
       reason: 'ERROR',
@@ -130,7 +194,7 @@ export async function adminFetchAllShops(): Promise<ShopProfile[]> {
     credentials: 'include',
     headers: { 'Accept': 'application/json' }
   });
-  const data = await res.json();
+  const data = await safeParseJson(res);
   if (!res.ok || !data.success) {
     throw new Error(data.error || 'Failed to fetch shops');
   }
@@ -158,7 +222,7 @@ export async function adminCreateShop(params: {
     },
     body: JSON.stringify(params)
   });
-  const data = await res.json();
+  const data = await safeParseJson(res);
   if (!res.ok || !data.success) {
     throw new Error(data.error || 'Failed to create shop');
   }
@@ -178,7 +242,7 @@ export async function adminUpdateShopStatus(
     },
     body: JSON.stringify({ status })
   });
-  const data = await res.json();
+  const data = await safeParseJson(res);
   if (!res.ok || !data.success) {
     throw new Error(data.error || 'Failed to update shop status');
   }
@@ -198,7 +262,7 @@ export async function adminResetShopPin(
     },
     body: JSON.stringify({ pin })
   });
-  const data = await res.json();
+  const data = await safeParseJson(res);
   if (!res.ok || !data.success) {
     throw new Error(data.error || 'Failed to reset PIN');
   }
@@ -227,7 +291,7 @@ export async function adminUpdateShopDetails(
     },
     body: JSON.stringify(details)
   });
-  const data = await res.json();
+  const data = await safeParseJson(res);
   if (!res.ok || !data.success) {
     throw new Error(data.error || 'Failed to update shop details');
   }
@@ -242,7 +306,7 @@ export async function adminDeleteShop(shopId: string): Promise<void> {
       'Accept': 'application/json'
     }
   });
-  const data = await res.json();
+  const data = await safeParseJson(res);
   if (!res.ok || !data.success) {
     throw new Error(data.error || 'Failed to delete shop');
   }

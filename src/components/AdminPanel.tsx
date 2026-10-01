@@ -197,11 +197,25 @@ export default function AdminPanel({
   };
 
   const handleStatusChange = async (shopId: string, status: 'active' | 'pending' | 'suspended') => {
+    const prevShops = [...shops];
+    // Optimistic UI update
+    setShops(prev => prev.map(s => s.shopId === shopId ? { ...s, status } : s));
+
     const result = await updateShopStatus(shopId, status);
     if (!result.success) {
-      alert(`Failed: ${result.error}`);
-    } else if (result.shop && onUpdateMerchant) {
-      onUpdateMerchant(result.shop);
+      // Revert optimistic update
+      setShops(prevShops);
+      alert(`Failed to update status: ${result.error}`);
+    } else {
+      const current = shops.find(s => s.shopId === shopId);
+      const updated = result.shop 
+        ? { ...current, ...result.shop, status } 
+        : current 
+          ? { ...current, status } 
+          : null;
+      if (updated && onUpdateMerchant) {
+        onUpdateMerchant(updated);
+      }
     }
   };
 

@@ -74,7 +74,7 @@ export function normalizeShopRecord(raw: any): ShopRecord {
 }
 
 /**
- * Creates a new shop record via the backend API and syncs to Firestore
+ * Creates a new shop record via Firestore and syncs with backend if reachable
  */
 export async function createShop(params: CreateShopParams): Promise<ShopOperationResult> {
   try {
@@ -85,7 +85,8 @@ export async function createShop(params: CreateShopParams): Promise<ShopOperatio
       return { success: false, error: 'PIN must be 4–16 digits.' };
     }
 
-    const created = await adminCreateShop({
+    const shopPayload = {
+      id: cleanId,
       shopId: cleanId,
       name: params.name.trim(),
       ownerName: params.ownerName.trim() || 'Owner',
@@ -94,40 +95,40 @@ export async function createShop(params: CreateShopParams): Promise<ShopOperatio
       category: params.category || 'Grocery & Spaza Shop',
       address: params.address?.trim() || '',
       pin: params.pin.trim(),
-      status: params.status || 'pending'
-    });
+      status: params.status || 'pending',
+      plan: params.plan || 'starter',
+      createdAt: new Date().toISOString()
+    };
 
-    if (params.plan && params.plan !== 'starter') {
-      try {
-        await adminUpdateShopDetails(cleanId, { plan: params.plan });
-        created.plan = params.plan;
-      } catch (e) {
-        console.warn('[shopAuth] Plan update note:', e);
-      }
-    }
+    // 1. Direct Firestore write (guarantees success on Netlify / static hosting)
+    await setDoc(doc(db, 'merchants', cleanId), shopPayload, { merge: true });
 
-    // Mirror to Firestore merchants collection for real-time subscribers
+    // 2. Non-blocking backend sync (if Express server is running)
+    let backendCreated: any = null;
     try {
-      await setDoc(doc(db, 'merchants', cleanId), {
-        id: cleanId,
+      backendCreated = await adminCreateShop({
         shopId: cleanId,
-        name: created.name,
-        ownerName: created.ownerName,
-        phoneNumber: created.phoneNumber,
-        email: created.email,
-        category: created.category,
-        address: created.address,
-        status: created.status,
-        plan: created.plan || 'starter',
-        createdAt: created.createdAt
-      }, { merge: true });
-    } catch (fsErr) {
-      console.warn('[shopAuth] Firestore sync note:', fsErr);
+        name: params.name.trim(),
+        ownerName: params.ownerName.trim() || 'Owner',
+        phoneNumber: params.phoneNumber?.trim() || '',
+        email: params.email?.trim() || '',
+        category: params.category || 'Grocery & Spaza Shop',
+        address: params.address?.trim() || '',
+        pin: params.pin.trim(),
+        status: params.status || 'pending'
+      });
+      if (params.plan && params.plan !== 'starter') {
+        try {
+          await adminUpdateShopDetails(cleanId, { plan: params.plan });
+        } catch {}
+      }
+    } catch (apiErr: any) {
+      console.warn('[shopAuth] Backend create sync note (static/Netlify mode):', apiErr.message);
     }
 
     return {
       success: true,
-      shop: normalizeShopRecord(created)
+      shop: normalizeShopRecord(backendCreated || shopPayload)
     };
   } catch (err: any) {
     console.error('[shopAuth] createShop error:', err);
@@ -140,22 +141,40 @@ export async function createShop(params: CreateShopParams): Promise<ShopOperatio
 
 /**
  * Updates shop status (active, pending, suspended)
+ * Directly updates Firestore to ensure 100% reliability on Netlify / static hosts,
+ * with non-blocking backend synchronization.
  */
 export async function updateShopStatus(
   shopId: string,
   status: 'active' | 'pending' | 'suspended'
 ): Promise<ShopOperationResult> {
-  try {
-    const updated = await adminUpdateShopStatus(shopId, status);
+  const cleanId = (shopId || '').replace(/[^A-Za-z0-9_-]/g, '').trim().toUpperCase();
+  if (!cleanId) {
+    return { success: false, error: 'Shop ID is required.' };
+  }
 
-    // Mirror to Firestore
+  try {
+    // 1. Always update Firestore directly (works seamlessly on Netlify)
+    await setDoc(
+      doc(db, 'merchants', cleanId),
+      {
+        status,
+        updatedAt: new Date().toISOString()
+      },
+      { merge: true }
+    );
+
+    // 2. Non-blocking backend sync (when Express backend is available)
+    let backendShop: any = null;
     try {
-      await setDoc(doc(db, 'merchants', shopId), { status }, { merge: true });
-    } catch {}
+      backendShop = await adminUpdateShopStatus(cleanId, status);
+    } catch (apiErr: any) {
+      console.warn('[shopAuth] Backend status sync note (static/Netlify mode):', apiErr.message);
+    }
 
     return {
       success: true,
-      shop: normalizeShopRecord(updated)
+      shop: normalizeShopRecord(backendShop || { id: cleanId, shopId: cleanId, status })
     };
   } catch (err: any) {
     console.error('[shopAuth] updateShopStatus error:', err);
@@ -177,7 +196,25 @@ export async function resetShopPin(
     if (!/^\d{4,16}$/.test(newPin.trim())) {
       return { success: false, error: 'PIN must be 4 to 16 digits.' };
     }
-    await adminResetShopPin(shopId, newPin.trim());
+    const cleanId = (shopId || '').replace(/[^A-Za-z0-9_-]/g, '').trim().toUpperCase();
+
+    // 1. Direct Firestore write
+    await setDoc(
+      doc(db, 'merchants', cleanId),
+      {
+        pin: newPin.trim(),
+        pinUpdatedAt: new Date().toISOString()
+      },
+      { merge: true }
+    );
+
+    // 2. Non-blocking backend sync
+    try {
+      await adminResetShopPin(cleanId, newPin.trim());
+    } catch (apiErr: any) {
+      console.warn('[shopAuth] Backend PIN reset note (static/Netlify mode):', apiErr.message);
+    }
+
     return { success: true };
   } catch (err: any) {
     console.error('[shopAuth] resetShopPin error:', err);
