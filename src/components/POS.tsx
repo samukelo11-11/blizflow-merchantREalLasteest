@@ -20,8 +20,10 @@ import {
   RefreshCw,
   X,
   Clock,
-  Share2
+  Share2,
+  QrCode
 } from 'lucide-react';
+import QrScanner from './QrScanner';
 
 interface POSProps {
   products: Product[];
@@ -78,6 +80,8 @@ export default function POS({
     return saved ? JSON.parse(saved) : [];
   });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [showScanner, setShowScanner] = useState(false);
+  const [scanMessage, setScanMessage] = useState<{ text: string; isError?: boolean } | null>(null);
 
   // Checkout Flow States
   const [posStatus, setPosStatus] = useState<'selling' | 'checkout' | 'confirm' | 'receipt'>('selling');
@@ -252,6 +256,29 @@ export default function POS({
         return [...prev, { product, quantity: qty }];
       }
     });
+  };
+
+  const handleBarcodeScanned = (scannedCode: string) => {
+    const clean = scannedCode.trim();
+    setShowScanner(false);
+    if (!clean) return;
+
+    const matched = products.find(p => p.barcode && p.barcode.toLowerCase() === clean.toLowerCase());
+    if (matched) {
+      if (matched.stockQuantity <= 0) {
+        setScanMessage({ text: `"${matched.name}" is Out of Stock!`, isError: true });
+        playBeep('warning');
+      } else {
+        addToCart(matched, 1);
+        playBeep('success');
+        setScanMessage({ text: `Scanned & added "${matched.name}" to cart!` });
+      }
+    } else {
+      setSearchQuery(clean);
+      setActiveTab('catalog');
+      setScanMessage({ text: `No product found matching barcode "${clean}".`, isError: true });
+    }
+    setTimeout(() => setScanMessage(null), 4000);
   };
 
   // Handle manual quantity changes
@@ -497,30 +524,58 @@ export default function POS({
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
                   Product Instant Search
                 </label>
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4.5 h-4.5" />
-                  <input
-                    type="text"
-                    placeholder="Search name, category, or barcode..."
-                    value={searchQuery}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setSearchQuery(val);
-                      if (val.trim() !== '') {
-                        setSelectedCategory('All'); // Reset category selection to 'All' so search is global
-                      }
-                      if (activeTab !== 'catalog') {
-                        setActiveTab('catalog'); // Swap tabs automatically for immediate search feedback
-                      }
-                    }}
-                    className="w-full pl-9.5 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-indigo-600 focus:bg-white text-xs text-slate-900"
-                  />
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4.5 h-4.5" />
+                    <input
+                      type="text"
+                      placeholder="Search name, category, or barcode..."
+                      value={searchQuery}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setSearchQuery(val);
+                        if (val.trim() !== '') {
+                          setSelectedCategory('All'); // Reset category selection to 'All' so search is global
+                        }
+                        if (activeTab !== 'catalog') {
+                          setActiveTab('catalog'); // Swap tabs automatically for immediate search feedback
+                        }
+                      }}
+                      className="w-full pl-9.5 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-indigo-600 focus:bg-white text-xs text-slate-900"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowScanner(true)}
+                    className="px-3.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 active:bg-indigo-200 text-indigo-700 border border-indigo-200/70 rounded-xl font-bold text-xs flex items-center gap-1.5 transition cursor-pointer shrink-0"
+                    title="Scan barcode or QR code with camera"
+                  >
+                    <QrCode className="w-4 h-4 text-indigo-600" />
+                    <span className="hidden sm:inline">Scan Code</span>
+                  </button>
                 </div>
+                {scanMessage && (
+                  <div className={`mt-2 p-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition ${
+                    scanMessage.isError
+                      ? 'bg-rose-50 text-rose-700 border border-rose-200/60'
+                      : 'bg-emerald-50 text-emerald-700 border border-emerald-200/60'
+                  }`}>
+                    {scanMessage.isError ? <AlertCircle className="w-4 h-4 shrink-0" /> : <CheckCircle className="w-4 h-4 shrink-0" />}
+                    <span>{scanMessage.text}</span>
+                  </div>
+                )}
                 <span className="text-[9px] text-slate-400 block mt-2 font-medium">
-                  Type here to instantly search the catalog by name, category, or barcode (e.g. kota, vetkoek, bread).
+                  Type here to instantly search the catalog, or click <strong>Scan Code</strong> to use your camera.
                 </span>
               </div>
             </div>
+
+            <QrScanner
+              open={showScanner}
+              onClose={() => setShowScanner(false)}
+              onDetected={handleBarcodeScanned}
+              title="Scan Product Barcode"
+            />
 
             {/* Product Selector Interface with Navigation Tabs */}
             <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-xs space-y-4">

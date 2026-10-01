@@ -276,7 +276,7 @@ export default function Dashboard({
                 </span>
                 <span className="text-slate-400 text-xs">•</span>
                 <span className="text-slate-500 text-xs font-medium flex items-center gap-1">
-                  <Clock className="w-3.5 h-3.5" /> {shop.openingHours.open} - {shop.openingHours.close}
+                  <Clock className="w-3.5 h-3.5" /> {shop.openingHours?.open || '08:00'} - {shop.openingHours?.close || '18:00'}
                 </span>
               </div>
               <h1 className="text-xl sm:text-2xl font-black text-slate-950 tracking-tight mt-1">

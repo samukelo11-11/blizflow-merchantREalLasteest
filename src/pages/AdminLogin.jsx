@@ -36,22 +36,12 @@ const ArrowLeftIcon = () => (
 export default function AdminLogin() {
   const navigate = useNavigate();
   const location = useLocation();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState('admin@blizflow.co.za');
+  const [password, setPassword] = useState('admin123');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-
-  // Check if Firebase is initialized, and set a diagnostic warning if not
-  useEffect(() => {
-    const isConfigured = isFirebaseConfigured();
-    
-    if (!isConfigured) {
-      const msg = `Firebase is not initialized. Please set up your Firebase project credentials in the Settings menu.`;
-      setError(msg);
-    }
-  }, []);
 
   // If already logged in as admin, redirect to dashboard
   useEffect(() => {

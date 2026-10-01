@@ -48,7 +48,6 @@ function getFirebaseConfig() {
 
 const { databaseId, ...firebaseConfig } = getFirebaseConfig();
 const app = initializeApp(firebaseConfig);
-export const auth = getAuth(app);
 
 const firestoreSettings: FirestoreSettings = { ignoreUndefinedProperties: true };
 if (typeof window !== 'undefined') {
@@ -57,6 +56,7 @@ if (typeof window !== 'undefined') {
   });
 }
 export const db = initializeFirestore(app, firestoreSettings, databaseId);
+export const auth = getAuth(app);
 
 export enum OperationType {
   CREATE = 'create',
@@ -112,10 +112,10 @@ export function handleFirestoreError(
     operationType,
     path,
     authInfo: {
-      userId:        auth.currentUser?.uid           ?? null,
-      emailMasked:   maskEmail(auth.currentUser?.email),
-      emailVerified: auth.currentUser?.emailVerified ?? null,
-      isAnonymous:   auth.currentUser?.isAnonymous   ?? null,
+      userId:        null,
+      emailMasked:   null,
+      emailVerified: null,
+      isAnonymous:   null,
     },
   };
 
@@ -133,7 +133,7 @@ export function handleFirestoreError(
 }
 
 export function isFirebaseConfigured(): boolean {
-  const o = auth.app.options;
+  const o = app.options;
   return (
     !!o.apiKey &&
     o.apiKey !== 'mock-api-key' &&

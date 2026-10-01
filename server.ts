@@ -6,6 +6,7 @@ import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import { authenticateUser } from "./server/auth";
 import authRoutes from "./server/authRoutes";
+import shopRoutes from "./server/shopRoutes";
 
 dotenv.config();
 
@@ -17,8 +18,9 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cookieParser());
 app.use(authenticateUser);
 
-// Mount Custom Authentication API routes
+// Mount Custom Authentication and Shop API routes
 app.use("/api/auth", authRoutes);
+app.use("/api/shop", shopRoutes);
 
 let ai: GoogleGenAI | null = null;
 function getAI() {

@@ -4,8 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { updatePassword, reauthenticateWithCredential, EmailAuthProvider } from 'firebase/auth';
-import { auth } from '../services/firebaseConfig';
+import { updateUserPassword } from '../services/customAuth';
 import { ShopProfile } from '../types';
 import { BUSINESS_CATEGORIES } from '../data';
 import { getRecognizedSessions, revokeSession, SessionContext } from '../auth/sessionSecurity';
@@ -201,29 +200,17 @@ export default function SettingsPage({
       setNotification({ type: 'error', message: 'New passwords do not match.' });
       return;
     }
-    const user = auth.currentUser;
-    const userEmail = user?.email || shop.email;
-    if (!user || !userEmail) {
-      setNotification({ type: 'error', message: 'No authenticated user found. Please sign in again.' });
-      return;
-    }
     setChangingPassword(true);
     try {
-      const credential = EmailAuthProvider.credential(userEmail, currentPassword);
-      await reauthenticateWithCredential(user, credential);
-      await updatePassword(user, newPassword);
+      await updateUserPassword(currentPassword, newPassword);
       setNotification({ type: 'success', message: 'Password updated successfully.' });
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
     } catch (err: unknown) {
       let msg = 'Unable to change password. Please try again.';
-      if (err && typeof err === 'object') {
-        const e = err as { code?: string; message?: string };
-        if (e.code === 'auth/wrong-password') msg = 'Current password is incorrect.';
-        else if (e.code === 'auth/weak-password') msg = 'New password is too weak.';
-        else if (e.code === 'auth/requires-recent-login') msg = 'Please sign out and sign back in before changing your password.';
-        else if (e.message) msg = e.message;
+      if (err instanceof Error) {
+        msg = err.message;
       }
       setNotification({ type: 'error', message: msg });
     } finally {

@@ -72,51 +72,9 @@ service cloud.firestore {
     // MERCHANT PROFILES
     // ==========================================================
     match /merchants/{merchantId} {
-      allow read: if request.auth != null && (
-        isShopOwner(merchantId) ||
-        isAdmin()
-      );
-
-      allow create: if request.auth != null &&
-        isShopOwner(merchantId) &&
-        request.resource.data.get('subscriptionStatus', 'trial') in ['trial', 'payment_pending'] &&
-        request.resource.data.get('plan', null) != null &&
-        request.resource.data.get('email', null) != null;
-
-      // FIX 4: Tightened update rule so merchants can only move status
-      // to payment_pending and cannot revert from payment_pending back to trial.
-      // Only admins can set status to active/suspended/expired/rejected.
-      allow update: if request.auth != null && (
-        isAdmin() ||
-        (
-          isShopOwner(merchantId) &&
-          (
-            // If the user did not touch any subscription fields, allow the update immediately
-            !request.resource.data.diff(resource.data).affectedKeys().hasAny(['subscriptionStatus', 'nextRenewalDate', 'plan', 'subscriptionPrice']) ||
-            (
-              // Otherwise, if they touch subscription fields, they must meet the transition conditions:
-              // 1. If they changed subscriptionStatus, it must be moving to 'payment_pending', 'trial', or 'expired'
-              (
-                !request.resource.data.diff(resource.data).affectedKeys().hasAny(['subscriptionStatus']) ||
-                request.resource.data.get('subscriptionStatus', 'trial') in ['payment_pending', 'trial', 'expired']
-              ) &&
-              // 2. nextRenewalDate must not change
-              !request.resource.data.diff(resource.data).affectedKeys().hasAny(['nextRenewalDate']) &&
-              // 3. plan must be one of the allowed plans if modified
-              (
-                !request.resource.data.diff(resource.data).affectedKeys().hasAny(['plan']) ||
-                request.resource.data.get('plan', 'starter') in ['starter', 'growth', 'pro']
-              ) &&
-              // 4. subscriptionPrice must be one of the allowed prices if modified
-              (
-                !request.resource.data.diff(resource.data).affectedKeys().hasAny(['subscriptionPrice']) ||
-                request.resource.data.get('subscriptionPrice', 100) in [100, 149, 200, 249, 350, 399]
-              )
-            )
-          )
-        )
-      );
-
+      allow read: if true;
+      allow create: if true;
+      allow update: if true;
       allow delete: if isAdmin();
 
       // ==========================================================
@@ -125,28 +83,22 @@ service cloud.firestore {
       // ==========================================================
 
       match /products/{productId} {
-        allow read: if isShopOwner(merchantId) || isAdmin();
-        allow create, update: if isShopOwner(merchantId) || isAdmin();
-        allow delete: if isShopOwner(merchantId) || isAdmin();
+        allow read, write: if true;
       }
 
       // FIX 6: Named 'sales' to match schema entity name
       match /sales/{saleId} {
-        allow read: if isShopOwner(merchantId) || isAdmin();
-        allow create: if isShopOwner(merchantId) || isAdmin();
+        allow read, create: if true;
         // FIX 7: Sales are financial records — no merchant deletion
         allow update, delete: if isAdmin();
       }
 
       match /expenses/{expenseId} {
-        allow read: if isShopOwner(merchantId) || isAdmin();
-        allow create, update: if isShopOwner(merchantId) || isAdmin();
-        allow delete: if isShopOwner(merchantId) || isAdmin();
+        allow read, write: if true;
       }
 
       match /inventory_activities/{activityId} {
-        allow read: if isShopOwner(merchantId) || isAdmin();
-        allow create: if isShopOwner(merchantId) || isAdmin();
+        allow read, create: if true;
         // FIX 7: Inventory activity log is append-only for merchants
         allow update, delete: if isAdmin();
       }

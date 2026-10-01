@@ -25,9 +25,10 @@ import {
   AlertTriangle,
   HelpCircle,
   Sparkles,
-  PackagePlus
+  PackagePlus,
+  QrCode
 } from 'lucide-react';
-import SubscriptionGuard from './SubscriptionGuard';
+import QrScanner from './QrScanner';
 
 interface ProductManagementProps {
   shop: ShopProfile;
@@ -70,6 +71,7 @@ export default function ProductManagement({
   const [imageUrl, setImageUrl] = useState('');
   const [barcode, setBarcode] = useState('');
   const [lowStockLevel, setLowStockLevel] = useState<number>(5);
+  const [showScanner, setShowScanner] = useState(false);
 
   const [scannedDuplicateProduct, setScannedDuplicateProduct] = useState<Product | null>(null);
 
@@ -703,9 +705,19 @@ export default function ProductManagement({
               <div className="grid grid-cols-2 gap-4">
                 {/* Manual Barcode Input */}
                 <div>
-                  <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-1.5">
-                    Barcode (Optional)
-                  </label>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider">
+                      Barcode (Optional)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setShowScanner(true)}
+                      className="text-indigo-600 hover:text-indigo-700 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition"
+                      title="Scan barcode with camera"
+                    >
+                      <QrCode className="w-3.5 h-3.5" /> Scan
+                    </button>
+                  </div>
                   <input
                     type="text"
                     placeholder="e.g. 600123456789"
@@ -817,7 +829,16 @@ export default function ProductManagement({
         </div>
       )}
 
-
+      {/* Barcode Scanner Modal */}
+      <QrScanner
+        open={showScanner}
+        onClose={() => setShowScanner(false)}
+        onDetected={(scannedVal) => {
+          setShowScanner(false);
+          handleBarcodeChange(scannedVal);
+        }}
+        title="Scan Barcode for Product"
+      />
 
       {/* Quick Restock Modal */}
       {restockingProduct && (

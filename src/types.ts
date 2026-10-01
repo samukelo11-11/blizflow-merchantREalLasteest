@@ -1,5 +1,6 @@
 export interface ShopProfile {
   id: string;
+  shopId?: string;
   ownerUid?: string;
   name: string;
   ownerName: string;
@@ -7,12 +8,13 @@ export interface ShopProfile {
   email?: string;
   category: string;
   address?: string;
-  status: 'open' | 'closed';
+  status: 'active' | 'pending' | 'suspended' | 'open' | 'closed';
   subscriptionStatus?: 'trial' | 'active' | 'expired' | 'payment_pending' | 'rejected' | 'suspended';
   trialEndsAt?: string;
   plan?: string;
   createdAt: string;
   onboardingStatus?: 'required' | 'in_progress' | 'complete';
+  notes?: string;
 
   // Optional profile & operational properties
   logoUrl?: string;

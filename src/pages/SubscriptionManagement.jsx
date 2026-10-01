@@ -6,7 +6,7 @@ export default function SubscriptionManagement({ merchants, onUpdateMerchant }) 
     <AdminPanel 
       merchants={merchants} 
       onUpdateMerchant={onUpdateMerchant} 
-      defaultTab="payment_pending"
+      defaultTab="all"
     />
   );
 }

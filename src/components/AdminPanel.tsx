@@ -1,1038 +1,685 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { doc, setDoc, collection, onSnapshot, query, orderBy } from 'firebase/firestore';
-import { db, auth } from '../services/firebaseConfig';
-import { ShopProfile, PaymentRecord } from '../types';
-import { loginAdmin } from '../services/adminAuth';
-import { 
-  ShieldCheck, 
-  Users, 
-  CheckCircle, 
-  XCircle, 
-  AlertTriangle, 
-  Clock, 
-  Search, 
-  Calendar, 
-  DollarSign, 
-  Lock, 
-  Unlock, 
-  Smartphone, 
-  HelpCircle,
-  Eye,
-  RefreshCw,
-  Bell,
-  ChevronRight,
-  Wrench,
-  Receipt,
-  FileCheck,
-  Ban
+import { useNavigate, Navigate } from 'react-router-dom';
+import { logoutAdmin, onAdminAuthChanged } from '../services/adminAuth';
+import {
+  createShop,
+  updateShopStatus,
+  resetShopPin,
+  adminFetchAllShops,
+  adminDeleteShop,
+  adminUpdateShopDetails,
+  ShopRecord,
+} from '../auth/shopAuth';
+import { db } from '../services/firebaseConfig';
+import { collection, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore';
+import {
+  ShieldCheck, Users, CheckCircle, XCircle, Clock, Search,
+  Lock, KeyRound, Edit3, PlusCircle, Smartphone, ArrowLeft,
+  Loader2, AlertCircle, RefreshCw, Trash2, CreditCard, Copy,
+  Check, X
 } from 'lucide-react';
 
 interface AdminPanelProps {
-  merchants: ShopProfile[];
-  onUpdateMerchant: (updated: ShopProfile) => void;
+  merchants?: ShopRecord[] | any[];
+  onUpdateMerchant?: (updated: any) => void;
   onClose?: () => void;
-  defaultTab?: 'all' | 'trial' | 'payment_pending' | 'active' | 'rejected' | 'suspended';
+  defaultTab?: 'all' | 'active' | 'pending' | 'suspended';
 }
 
-export default function AdminPanel({ merchants, onUpdateMerchant, onClose, defaultTab }: AdminPanelProps) {
+export default function AdminPanel({
+  merchants: initialMerchants,
+  onUpdateMerchant,
+  onClose,
+  defaultTab = 'all'
+}: AdminPanelProps) {
   const navigate = useNavigate();
+
+  // Synchronous initial auth check to eliminate flashing/glitching
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    return sessionStorage.getItem('blizflow_admin_auth') === 'true';
+    return typeof window !== 'undefined' && sessionStorage.getItem('blizflow_admin_auth') === 'true';
   });
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [authError, setAuthError] = useState('');
-  const [loading, setLoading] = useState(false);
-  
-  // Real-time payments collection
-  const [payments, setPayments] = useState<PaymentRecord[]>([]);
+  const [authLoading, setAuthLoading]         = useState<boolean>(() => {
+    return typeof window !== 'undefined' && sessionStorage.getItem('blizflow_admin_auth') !== 'true';
+  });
 
-  // Admin search & filter
-  const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'trial' | 'payment_pending' | 'active' | 'rejected' | 'suspended'>(defaultTab || 'all');
-
-  // Detail view
-  const [selectedMerchant, setSelectedMerchant] = useState<ShopProfile | null>(null);
-  const [showDevControls, setShowDevControls] = useState(false);
-  
-  // Modals / forms state
-  const [rejectionModalMerchantId, setRejectionModalMerchantId] = useState<string | null>(null);
-  const [rejectionModalPaymentId, setRejectionModalPaymentId] = useState<string | null>(null);
-  const [rejectionReason, setRejectionReason] = useState('');
-  
-  // Date adjuster modal
-  const [dateModalMerchant, setDateModalMerchant] = useState<ShopProfile | null>(null);
-  const [customTrialDate, setCustomTrialDate] = useState('');
-  const [customRenewalDate, setCustomRenewalDate] = useState('');
-
-  useEffect(() => {
-    if (defaultTab) {
-      setStatusFilter(defaultTab);
+  // FIX 3: Use ShopRecord as the unified type
+  const [shops, setShops]             = useState<ShopRecord[]>(() => {
+    if (initialMerchants && initialMerchants.length > 0) {
+      return initialMerchants.map(m => ({ ...m, shopId: m.shopId || m.id }));
     }
-  }, [defaultTab]);
+    return [];
+  });
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'pending' | 'suspended'>(defaultTab);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [adminSection, setAdminSection] = useState<'shops' | 'billing'>('shops');
+  const [copiedId, setCopiedId]         = useState<string | null>(null);
 
-  // Real-time Firestore sync for payments
+  // Modals
+  const [showCreateModal, setShowCreateModal]     = useState(false);
+  const [showResetPinModal, setShowResetPinModal] = useState<ShopRecord | null>(null);
+  const [showEditModal, setShowEditModal]         = useState<ShopRecord | null>(null);
+
+  // Create form
+  const [newShopId, setNewShopId]     = useState('');
+  const [newName, setNewName]         = useState('');
+  const [newOwner, setNewOwner]       = useState('');
+  const [newPhone, setNewPhone]       = useState('');
+  const [newEmail, setNewEmail]       = useState('');
+  const [newCategory, setNewCategory] = useState('Grocery & Spaza Shop');
+  const [newAddress, setNewAddress]   = useState('');
+  const [newPin, setNewPin]           = useState('');
+  const [newStatus, setNewStatus]     = useState<'active' | 'pending'>('active');
+  const [newPlan, setNewPlan]         = useState<'starter' | 'growth' | 'pro'>('starter');
+  const [formError, setFormError]     = useState<string | null>(null);
+  const [formSuccess, setFormSuccess] = useState<string | null>(null);
+  const [formLoading, setFormLoading] = useState(false);
+
+  // Reset PIN form
+  const [resetPinValue, setResetPinValue] = useState('');
+  const [pinModalError, setPinModalError] = useState<string | null>(null);
+  const [pinLoading, setPinLoading]       = useState(false);
+
+  // Edit form
+  const [editName, setEditName]       = useState('');
+  const [editOwner, setEditOwner]     = useState('');
+  const [editPhone, setEditPhone]     = useState('');
+  const [editEmail, setEditEmail]     = useState('');
+  const [editCategory, setEditCategory] = useState('');
+  const [editAddress, setEditAddress] = useState('');
+  const [editPlan, setEditPlan]       = useState<'starter' | 'growth' | 'pro'>('starter');
+  const [editLoading, setEditLoading] = useState(false);
+
+  // FIX 1: Subscribe to admin auth state
   useEffect(() => {
+    const unsub = onAdminAuthChanged(user => {
+      setIsAuthenticated(!!user);
+      setAuthLoading(false);
+    });
+    return unsub;
+  }, []);
+
+  // FIX 2: Load shops via Firestore real-time listener on the 'merchants' collection + backend baseline
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    setIsRefreshing(true);
+
+    // Initial baseline from backend API
+    adminFetchAllShops()
+      .then(serverShops => {
+        if (serverShops && serverShops.length > 0) {
+          setShops(prev => {
+            const map = new Map<string, ShopRecord>();
+            serverShops.forEach(s => map.set(s.id, { ...s, shopId: s.id } as ShopRecord));
+            prev.forEach(s => map.set(s.shopId, s));
+            return Array.from(map.values()).sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+          });
+        }
+      })
+      .catch(e => console.warn('[AdminPanel] Server baseline fetch note:', e));
+
     const unsub = onSnapshot(
-      collection(db, 'payments'),
-      (snapshot) => {
-        const list: PaymentRecord[] = [];
-        snapshot.forEach((d) => {
-          list.push({ ...d.data(), id: d.id } as PaymentRecord);
+      collection(db, 'merchants'),
+      snapshot => {
+        const list: ShopRecord[] = [];
+        snapshot.forEach(d => {
+          const data = d.data();
+          list.push({ ...data, id: d.id, shopId: d.id } as ShopRecord);
         });
-        list.sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
-        setPayments(list);
+        if (list.length > 0) {
+          setShops(prev => {
+            const map = new Map<string, ShopRecord>();
+            prev.forEach(s => map.set(s.shopId, s));
+            list.forEach(s => map.set(s.shopId, s));
+            return Array.from(map.values()).sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+          });
+        }
+        setIsRefreshing(false);
       },
-      (err) => {
-        console.warn('[AdminPanel] Payments sync warning:', err);
+      err => {
+        console.warn('[AdminPanel] Merchants listener error:', err);
+        setIsRefreshing(false);
       }
     );
     return () => unsub();
-  }, []);
-  
-  // Handle Admin Auth
-  const handleAuthSubmit = async (e: React.FormEvent) => {
+  }, [isAuthenticated]);
+
+  const handleSignOut = async () => {
+    await logoutAdmin().catch(() => {});
+    navigate('/admin/login');
+  };
+
+  const handleCopy = (shop: ShopRecord) => {
+    const text = `BlizFlow Shop Access\nShop ID: ${shop.shopId}\nShop Name: ${shop.name}\nStatus: ${shop.status.toUpperCase()}`;
+    navigator.clipboard.writeText(text);
+    setCopiedId(shop.shopId);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const handleCreateShop = async (e: React.FormEvent) => {
     e.preventDefault();
-    setAuthError('');
-    setLoading(true);
+    setFormError(null);
+    setFormSuccess(null);
+    const cleanId = newShopId.replace(/[^A-Za-z0-9_-]/g, '').trim().toUpperCase();
+    if (!cleanId)       { setFormError('Shop ID is required.'); return; }
+    if (!newName.trim()) { setFormError('Shop Name is required.'); return; }
+    if (!/^\d{4,16}$/.test(newPin.trim())) { setFormError('PIN must be 4–16 digits.'); return; }
+
+    setFormLoading(true);
+    const result = await createShop({
+      shopId:      cleanId,
+      name:        newName.trim(),
+      ownerName:   newOwner.trim() || 'Owner',
+      phoneNumber: newPhone.trim(),
+      email:       newEmail.trim(),
+      category:    newCategory,
+      address:     newAddress.trim(),
+      pin:         newPin.trim(),
+      plan:        newPlan,
+    });
+    setFormLoading(false);
+
+    if (!result.success) { setFormError(result.error || 'Failed to create shop.'); return; }
+
+    // If chosen status is active, update it (createShop defaults to pending)
+    if (newStatus === 'active') {
+      await updateShopStatus(cleanId, 'active');
+    }
+
+    if (result.shop && onUpdateMerchant) {
+      onUpdateMerchant(result.shop);
+    }
+
+    setFormSuccess(`Shop ${cleanId} created successfully!`);
+    setNewShopId(''); setNewName(''); setNewOwner(''); setNewPhone('');
+    setNewEmail(''); setNewAddress(''); setNewPin(''); setNewPlan('starter');
+    setTimeout(() => { setShowCreateModal(false); setFormSuccess(null); }, 1500);
+  };
+
+  const handleStatusChange = async (shopId: string, status: 'active' | 'pending' | 'suspended') => {
+    const result = await updateShopStatus(shopId, status);
+    if (!result.success) {
+      alert(`Failed: ${result.error}`);
+    } else if (result.shop && onUpdateMerchant) {
+      onUpdateMerchant(result.shop);
+    }
+  };
+
+  const handleResetPin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!showResetPinModal) return;
+    setPinModalError(null);
+    if (!/^\d{4,16}$/.test(resetPinValue.trim())) {
+      setPinModalError('PIN must be 4–16 digits.');
+      return;
+    }
+    setPinLoading(true);
+    const result = await resetShopPin(showResetPinModal.shopId, resetPinValue.trim());
+    setPinLoading(false);
+    if (!result.success) { setPinModalError(result.error || 'Failed to reset PIN.'); return; }
+    setShowResetPinModal(null);
+    setResetPinValue('');
+  };
+
+  const handleEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!showEditModal) return;
+    setEditLoading(true);
+    const updates = {
+      name:        editName.trim()     || showEditModal.name,
+      ownerName:   editOwner.trim()    || showEditModal.ownerName,
+      phoneNumber: editPhone.trim()    || showEditModal.phoneNumber,
+      email:       editEmail.trim(),
+      category:    editCategory.trim() || showEditModal.category,
+      address:     editAddress.trim(),
+      plan:        editPlan,
+    };
     try {
-      await loginAdmin(email, password, false);
-      setIsAuthenticated(true);
-      sessionStorage.setItem('blizflow_admin_auth', 'true');
+      try {
+        await adminUpdateShopDetails(showEditModal.shopId, updates);
+      } catch (beErr) {
+        console.warn('[AdminPanel] Server update note:', beErr);
+      }
+
+      await setDoc(doc(db, 'merchants', showEditModal.shopId), updates, { merge: true });
+      if (onUpdateMerchant) {
+        onUpdateMerchant({ ...showEditModal, ...updates });
+      }
+      setShowEditModal(null);
     } catch (err: any) {
-      setAuthError(err.message || 'Incorrect email or password.');
+      alert(`Failed to update: ${err.message}`);
     } finally {
-      setLoading(false);
+      setEditLoading(false);
     }
   };
 
-  // Action handlers
-  const handleApprovePayment = async (mId: string, paymentId?: string) => {
-    const merchant = merchants.find(m => m.id === mId);
-    if (!merchant) return;
-
-    const nextRenewal = new Date();
-    nextRenewal.setDate(nextRenewal.getDate() + 30); // 30 days active
-    const nowIso = new Date().toISOString();
-    const adminEmail = auth.currentUser?.email || email || 'admin@blizflow.co.za';
-
-    const updated: ShopProfile = {
-      ...merchant,
-      subscriptionStatus: 'active',
-      plan: 'starter',
-      subscriptionPrice: 149,
-      subscriptionStartedAt: merchant.subscriptionStartedAt || nowIso,
-      subscribedAt: nowIso,
-      nextRenewalDate: nextRenewal.toISOString(),
-      rejectionReason: undefined
-    };
-
-    // Update merchant record in Firestore
+  const handleDeleteShop = async (shopId: string, shopName: string) => {
+    if (!window.confirm(`Permanently delete "${shopName}" (${shopId})? This cannot be undone.`)) return;
     try {
-      await setDoc(doc(db, 'merchants', mId), updated, { merge: true });
-    } catch (e) {
-      console.warn('[AdminPanel] Error updating merchant in Firestore:', e);
-    }
-
-    // Find and update matching payment record
-    const targetPayment = paymentId 
-      ? payments.find(p => p.id === paymentId)
-      : payments.find(p => p.merchantId === mId && p.status === 'PENDING');
-
-    if (targetPayment) {
       try {
-        await setDoc(doc(db, 'payments', targetPayment.id), {
-          ...targetPayment,
-          status: 'APPROVED',
-          reviewedAt: nowIso,
-          reviewedBy: adminEmail
-        }, { merge: true });
-      } catch (pErr) {
-        console.warn('[AdminPanel] Error updating payment record:', pErr);
+        await adminDeleteShop(shopId);
+      } catch (beErr) {
+        console.warn('[AdminPanel] Server delete note:', beErr);
       }
+      await deleteDoc(doc(db, 'merchants', shopId));
+    } catch (err: any) {
+      alert(`Failed to delete: ${err.message}`);
     }
-
-    // Save notification to merchant
-    const notifyKey = `blizflow_notify_${mId}`;
-    const notifications = JSON.parse(localStorage.getItem(notifyKey) || '[]');
-    notifications.push({
-      id: `notify-${Date.now()}`,
-      title: '🎉 Subscription Activated!',
-      message: 'Your payment for BlizFlow Starter has been approved! Full POS and Stock limits are unlocked.',
-      type: 'success',
-      timestamp: nowIso,
-      read: false
-    });
-    localStorage.setItem(notifyKey, JSON.stringify(notifications));
-
-    onUpdateMerchant(updated);
-    setSelectedMerchant(prev => prev && prev.id === mId ? updated : prev);
   };
 
-  const handleOpenRejection = (mId: string, paymentId?: string) => {
-    setRejectionModalMerchantId(mId);
-    setRejectionModalPaymentId(paymentId || null);
-    setRejectionReason('Reference code not found in bank records. Please re-upload or input your correct reference code.');
-  };
-
-  const handleConfirmRejection = async () => {
-    if (!rejectionModalMerchantId) return;
-    const merchant = merchants.find(m => m.id === rejectionModalMerchantId);
-    if (!merchant) return;
-
-    const nowIso = new Date().toISOString();
-    const adminEmail = auth.currentUser?.email || email || 'admin@blizflow.co.za';
-
-    const updated: ShopProfile = {
-      ...merchant,
-      subscriptionStatus: 'rejected',
-      rejectionReason: rejectionReason.trim()
-    };
-
-    // Update merchant record in Firestore
-    try {
-      await setDoc(doc(db, 'merchants', rejectionModalMerchantId), updated, { merge: true });
-    } catch (e) {
-      console.warn('[AdminPanel] Error updating rejected merchant in Firestore:', e);
-    }
-
-    // Find and update matching payment record
-    const targetPayment = rejectionModalPaymentId 
-      ? payments.find(p => p.id === rejectionModalPaymentId)
-      : payments.find(p => p.merchantId === rejectionModalMerchantId && p.status === 'PENDING');
-
-    if (targetPayment) {
-      try {
-        await setDoc(doc(db, 'payments', targetPayment.id), {
-          ...targetPayment,
-          status: 'REJECTED',
-          reviewedAt: nowIso,
-          reviewedBy: adminEmail,
-          rejectionReason: rejectionReason.trim()
-        }, { merge: true });
-      } catch (pErr) {
-        console.warn('[AdminPanel] Error updating rejected payment record:', pErr);
-      }
-    }
-
-    // Save notification to merchant
-    const notifyKey = `blizflow_notify_${rejectionModalMerchantId}`;
-    const notifications = JSON.parse(localStorage.getItem(notifyKey) || '[]');
-    notifications.push({
-      id: `notify-${Date.now()}`,
-      title: '❌ Payment Rejected',
-      message: `Your payment was rejected. Reason: ${rejectionReason.trim()}`,
-      type: 'error',
-      timestamp: nowIso,
-      read: false
-    });
-    localStorage.setItem(notifyKey, JSON.stringify(notifications));
-
-    onUpdateMerchant(updated);
-    setSelectedMerchant(prev => prev && prev.id === rejectionModalMerchantId ? updated : prev);
-    setRejectionModalMerchantId(null);
-    setRejectionModalPaymentId(null);
-  };
-
-  const handleSuspendStore = (mId: string, suspend: boolean) => {
-    const merchant = merchants.find(m => m.id === mId);
-    if (!merchant) return;
-
-    const updated: ShopProfile = {
-      ...merchant,
-      subscriptionStatus: suspend ? 'suspended' : (merchant.nextRenewalDate ? 'active' : 'trial')
-    };
-
-    // Save notification to merchant
-    const notifyKey = `blizflow_notify_${mId}`;
-    const notifications = JSON.parse(localStorage.getItem(notifyKey) || '[]');
-    notifications.push({
-      id: `notify-${Date.now()}`,
-      title: suspend ? '⚠️ Store Access Suspended' : '✅ Store Access Restored',
-      message: suspend 
-        ? 'Access to your store has been suspended by administration. Please contact billing@blizflow.co.za.' 
-        : 'Your store access has been fully restored! Welcome back to normal operations.',
-      type: suspend ? 'warning' : 'success',
-      timestamp: new Date().toISOString(),
-      read: false
-    });
-    localStorage.setItem(notifyKey, JSON.stringify(notifications));
-
-    onUpdateMerchant(updated);
-    setSelectedMerchant(prev => prev && prev.id === mId ? updated : prev);
-  };
-
-  const handleOpenDateAdjuster = (m: ShopProfile) => {
-    setDateModalMerchant(m);
-    
-    // Format dates to YYYY-MM-DD
-    const trialDate = m.trialEndsAt ? new Date(m.trialEndsAt) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-    setCustomTrialDate(trialDate.toISOString().split('T')[0]);
-
-    const renewalDate = m.nextRenewalDate ? new Date(m.nextRenewalDate) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-    setCustomRenewalDate(renewalDate.toISOString().split('T')[0]);
-  };
-
-  const handleSaveDates = () => {
-    if (!dateModalMerchant) return;
-
-    const updated: ShopProfile = {
-      ...dateModalMerchant,
-      trialEndsAt: new Date(customTrialDate).toISOString(),
-      nextRenewalDate: new Date(customRenewalDate).toISOString()
-    };
-
-    onUpdateMerchant(updated);
-    setSelectedMerchant(prev => prev && prev.id === dateModalMerchant.id ? updated : prev);
-    setDateModalMerchant(null);
-  };
-
-  const handleForceTrialExpiry = (mId: string) => {
-    const merchant = merchants.find(m => m.id === mId);
-    if (!merchant) return;
-
-    const updated: ShopProfile = {
-      ...merchant,
-      subscriptionStatus: 'trial',
-      trialEndsAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString() // Set to yesterday
-    };
-
-    onUpdateMerchant(updated);
-    setSelectedMerchant(prev => prev && prev.id === mId ? updated : prev);
-  };
-
-  const handleForceActiveExpiry = (mId: string) => {
-    const merchant = merchants.find(m => m.id === mId);
-    if (!merchant) return;
-
-    const updated: ShopProfile = {
-      ...merchant,
-      subscriptionStatus: 'expired',
-      nextRenewalDate: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString() // Set to yesterday
-    };
-
-    onUpdateMerchant(updated);
-    setSelectedMerchant(prev => prev && prev.id === mId ? updated : prev);
-  };
-
-  // Filtering
-  const filteredMerchants = merchants.filter(m => {
-    const matchesSearch = 
-      m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      m.ownerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      m.phoneNumber.includes(searchQuery) ||
-      (m.email && m.email.toLowerCase().includes(searchQuery.toLowerCase()));
-    
-    if (statusFilter === 'all') return matchesSearch;
-    return m.subscriptionStatus === statusFilter && matchesSearch;
+  const filteredShops = shops.filter(s => {
+    const q = searchQuery.toLowerCase();
+    const matchSearch =
+      s.name?.toLowerCase().includes(q) ||
+      s.shopId?.toLowerCase().includes(q) ||
+      s.ownerName?.toLowerCase().includes(q) ||
+      s.phoneNumber?.includes(q);
+    if (statusFilter === 'all') return matchSearch;
+    return matchSearch && s.status === statusFilter;
   });
 
-  const pendingMerchants = merchants.filter(m => m.subscriptionStatus === 'payment_pending');
+  const planPrice = (plan?: string) =>
+    plan === 'pro' ? 350 : plan === 'growth' ? 200 : 100;
 
-  const getStatusBadge = (m: ShopProfile) => {
-    const now = new Date();
-    const createdDate = m.createdAt ? new Date(m.createdAt) : new Date();
-    const defaultTrialEnd = new Date(createdDate.getTime() + 7 * 24 * 60 * 60 * 1000);
-    const trialEnds = m.trialEndsAt ? new Date(m.trialEndsAt) : defaultTrialEnd;
-    const calculatedDaysLeft = Math.max(0, Math.ceil((trialEnds.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
-    const isTrialExpired = calculatedDaysLeft === 0 && m.subscriptionStatus !== 'active';
-
-    if (m.subscriptionStatus === 'active') {
-      return <span className="bg-emerald-950 text-emerald-400 border border-emerald-900 text-[10px] font-black uppercase px-2 py-1 rounded-full">Active Premium</span>;
+  // Manual refresh handler
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      const serverShops = await adminFetchAllShops();
+      if (serverShops && serverShops.length > 0) {
+        setShops(prev => {
+          const map = new Map<string, ShopRecord>();
+          serverShops.forEach(s => map.set(s.id, { ...s, shopId: s.id } as ShopRecord));
+          prev.forEach(s => map.set(s.shopId, s));
+          return Array.from(map.values()).sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+        });
+      }
+    } catch (err) {
+      console.warn('[AdminPanel] Refresh error:', err);
+    } finally {
+      setIsRefreshing(false);
     }
-    if (m.subscriptionStatus === 'payment_pending') {
-      return <span className="bg-indigo-950 text-indigo-400 border border-indigo-900 text-[10px] font-black uppercase px-2 py-1 rounded-full animate-pulse">Payment Pending</span>;
-    }
-    if (m.subscriptionStatus === 'rejected') {
-      return <span className="bg-red-950/80 text-red-400 border border-red-900/40 text-[10px] font-black uppercase px-2 py-1 rounded-full">Rejected</span>;
-    }
-    if (m.subscriptionStatus === 'suspended') {
-      return <span className="bg-red-950 text-red-500 border border-red-900 text-[10px] font-black uppercase px-2 py-1 rounded-full">Suspended Store</span>;
-    }
-    if (m.subscriptionStatus === 'expired') {
-      return <span className="bg-amber-950 text-amber-500 border border-amber-900 text-[10px] font-black uppercase px-2 py-1 rounded-full">Expired</span>;
-    }
-    if (isTrialExpired) {
-      return <span className="bg-amber-950 text-amber-500 border border-amber-900 text-[10px] font-black uppercase px-2 py-1 rounded-full">Trial Expired</span>;
-    }
-    return <span className="bg-slate-800 text-slate-300 border border-slate-700 text-[10px] font-black uppercase px-2 py-1 rounded-full">Active Trial</span>;
   };
 
-  // Render Auth screen first
-  if (!isAuthenticated) {
+  // ── Loading ──
+  if (authLoading) {
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col justify-center items-center p-4">
-        <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl relative space-y-6">
-          <div className="text-center space-y-2">
-            <div className="w-12 h-12 rounded-2xl bg-indigo-600/10 border border-indigo-500/30 text-indigo-400 flex items-center justify-center mx-auto">
-              <ShieldCheck className="w-6 h-6" />
-            </div>
-            <h1 className="text-xl font-black text-white">Administration Portal</h1>
-            <p className="text-xs text-slate-400 leading-normal">
-              Enter authorized administrator credentials to verify access and manage merchant profiles.
-            </p>
-          </div>
-
-          <form onSubmit={handleAuthSubmit} className="space-y-4">
-            <div>
-              <label className="block text-[11px] font-black uppercase tracking-wider text-slate-400 mb-1.5">
-                Email Address
-              </label>
-              <input
-                type="email"
-                placeholder="admin@blizflow.co.za"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                disabled={loading}
-                className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition disabled:opacity-55"
-                required
-                autoFocus
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-black uppercase tracking-wider text-slate-400 mb-1.5">
-                Password
-              </label>
-              <input
-                type="password"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                disabled={loading}
-                className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition disabled:opacity-55"
-                required
-              />
-            </div>
-
-            {authError && (
-              <p className="text-xs text-red-400 font-semibold bg-red-950/40 border border-red-900/40 rounded-lg p-2.5">
-                {authError}
-              </p>
-            )}
-
-            <div className="flex gap-3 pt-2">
-              <button
-                type="button"
-                onClick={onClose || (() => navigate('/'))}
-                disabled={loading}
-                className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl transition cursor-pointer disabled:opacity-50"
-              >
-                Back to Shop
-              </button>
-              <button
-                type="submit"
-                disabled={loading}
-                className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-xl transition shadow-md shadow-indigo-600/10 cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
-              >
-                {loading ? (
-                  <>
-                    <span className="spinner-inline animate-spin rounded-full h-3 w-3 border-2 border-white border-t-transparent" />
-                    Verifying...
-                  </>
-                ) : (
-                  'Unlock Panel'
-                )}
-              </button>
-            </div>
-          </form>
-
-          <p className="text-[10px] text-slate-500 text-center leading-normal">
-            🛡️ Secure administrative entry. Unauthorized access is strictly prohibited and logged.
-          </p>
-        </div>
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+        <Loader2 className="w-6 h-6 text-slate-400 animate-spin" />
       </div>
     );
   }
 
+  // ── Unauthorized redirect to unified /admin/login ──
+  if (!isAuthenticated) {
+    return <Navigate to="/admin/login" replace />;
+  }
+
+  // ── Admin Dashboard ──
   return (
-    <div className="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans">
-      
-      {/* Admin Header */}
-      <header className="sticky top-0 z-40 bg-slate-900 border-b border-slate-800 px-6 py-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
+
+      {/* Header */}
+      <header className="bg-slate-900 border-b border-slate-800 px-6 py-4 flex flex-col md:flex-row items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <div className="bg-indigo-600/25 border border-indigo-500/30 text-indigo-400 p-2 rounded-xl flex items-center justify-center">
-            <ShieldCheck className="w-5 h-5" />
+          <div className="bg-indigo-600 p-2 rounded-xl">
+            <ShieldCheck className="w-5 h-5 text-white" />
           </div>
           <div>
-            <h1 className="text-lg font-black tracking-tight flex items-center gap-2 text-white">
-              BlizFlow Admin Console
-              <span className="bg-indigo-950 text-indigo-400 border border-indigo-900 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">
-                System Master
-              </span>
-            </h1>
-            <p className="text-[10px] text-slate-400">Manage billing, pending approvals, manual suspensions, and trial limits.</p>
+            <h1 className="text-base font-black text-white">BlizFlow Admin Console</h1>
+            <p className="text-[11px] text-slate-400">Shop ID & PIN Management</p>
           </div>
         </div>
-
-        {/* Sub Routing Navbar */}
-        <div className="flex items-center gap-1 bg-slate-950 border border-slate-800 p-1 rounded-xl">
-          <button
-            onClick={() => navigate('/admin/dashboard')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-black transition cursor-pointer uppercase tracking-wider ${
-              window.location.pathname === '/admin/dashboard' || window.location.pathname === '/admin'
-                ? 'bg-indigo-600 text-white'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            Dashboard
+        <div className="flex items-center gap-3">
+          <button onClick={() => setShowCreateModal(true)}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer">
+            <PlusCircle className="w-4 h-4" /> Create Shop
           </button>
-          <button
-            onClick={() => navigate('/admin/merchants')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-black transition cursor-pointer uppercase tracking-wider ${
-              window.location.pathname === '/admin/merchants'
-                ? 'bg-indigo-600 text-white'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            Merchants
+          <button onClick={handleRefresh} disabled={isRefreshing} title="Refresh"
+            className="bg-slate-800 border border-slate-700 text-slate-300 p-2.5 rounded-xl transition hover:bg-slate-700 cursor-pointer">
+            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
           </button>
-          <button
-            onClick={() => navigate('/admin/subscriptions')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-black transition cursor-pointer uppercase tracking-wider ${
-              window.location.pathname === '/admin/subscriptions'
-                ? 'bg-indigo-600 text-white'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            Subscriptions
+          <button onClick={handleSignOut}
+            className="bg-slate-800 border border-slate-700 text-slate-400 hover:text-white font-bold text-xs px-3.5 py-2.5 rounded-xl transition cursor-pointer">
+            Sign Out
           </button>
         </div>
-
-        <button
-          onClick={onClose || (() => navigate('/'))}
-          className="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold text-xs px-4 py-2 rounded-xl transition cursor-pointer w-full md:w-auto text-center"
-        >
-          Close Console
-        </button>
       </header>
 
-      {/* Main Panel Content */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
-        
-        {/* SECTION 1 — ADMIN OVERVIEW */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
-            <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block">Total Shops</span>
-            <span className="text-2xl font-black text-white mt-1 block">{merchants.length}</span>
-          </div>
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
-            <span className="text-[10px] font-black uppercase tracking-wider text-emerald-500 block">Active Plans</span>
-            <span className="text-2xl font-black text-emerald-400 mt-1 block">
-              {merchants.filter(m => m.subscriptionStatus === 'active').length}
-            </span>
-          </div>
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 relative overflow-hidden">
-            <span className="text-[10px] font-black uppercase tracking-wider text-indigo-400 block">Pending Approval</span>
-            <span className={`text-2xl font-black text-indigo-400 mt-1 block ${pendingMerchants.length > 0 ? 'animate-pulse' : ''}`}>
-              {pendingMerchants.length}
-            </span>
-            {pendingMerchants.length > 0 && (
-              <span className="absolute top-3 right-3 w-2 h-2 bg-indigo-500 rounded-full animate-ping" />
-            )}
-          </div>
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
-            <span className="text-[10px] font-black uppercase tracking-wider text-amber-500 block">Trial Mode</span>
-            <span className="text-2xl font-black text-amber-400 mt-1 block">
-              {merchants.filter(m => m.subscriptionStatus === 'trial' || !m.subscriptionStatus).length}
-            </span>
-          </div>
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 col-span-2 md:col-span-1">
-            <span className="text-[10px] font-black uppercase tracking-wider text-red-500 block">Suspended</span>
-            <span className="text-2xl font-black text-red-400 mt-1 block">
-              {merchants.filter(m => m.subscriptionStatus === 'suspended').length}
-            </span>
-          </div>
+
+        {/* Section tabs */}
+        <div className="flex gap-1.5 bg-slate-900 border border-slate-800 p-1.5 rounded-2xl max-w-xs">
+          {(['shops', 'billing'] as const).map(s => (
+            <button key={s} onClick={() => setAdminSection(s)}
+              className={`flex-1 py-2 px-3 rounded-xl text-xs font-black transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                adminSection === s ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'
+              }`}>
+              {s === 'shops' ? <><Users className="w-3.5 h-3.5" />Shops</> : <><CreditCard className="w-3.5 h-3.5" />Billing</>}
+            </button>
+          ))}
         </div>
 
-        {/* SECTION 2 — ATTENTION FIRST */}
-        {pendingMerchants.length > 0 && (
-          <section className="space-y-3">
-            <div className="flex items-center gap-2">
-              <Bell className="w-4 h-4 text-indigo-400" />
-              <h2 className="text-sm font-black text-white uppercase tracking-wider">Pending Payment Approvals</h2>
-              <span className="bg-indigo-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full">
-                {pendingMerchants.length} pending
-              </span>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {pendingMerchants.map(m => {
-                const merchantPayment = payments.find(p => p.merchantId === m.id && p.status === 'PENDING');
-                const ref = merchantPayment?.reference || localStorage.getItem(`blizflow_eft_ref_${m.id}`) || `BF-${m.id.substring(0, 8).toUpperCase()}`;
-                const amount = merchantPayment?.amount || 149;
-                const submittedDate = merchantPayment?.submittedAt 
-                  ? new Date(merchantPayment.submittedAt).toLocaleString() 
-                  : (m.paymentSubmittedAt ? new Date(m.paymentSubmittedAt).toLocaleString() : 'Recent');
-
-                return (
-                  <div key={m.id} className="bg-slate-900 border border-indigo-500/30 rounded-2xl p-4 space-y-3 relative overflow-hidden">
-                    <div className="absolute top-0 left-0 w-1 h-full bg-indigo-500" />
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <h3 className="font-black text-white text-sm">{m.name}</h3>
-                        <p className="text-[10px] text-slate-400 mt-0.5">{m.category}</p>
-                      </div>
-                      <span className="bg-indigo-950 text-indigo-400 border border-indigo-900 text-[10px] font-black uppercase px-2 py-1 rounded-full animate-pulse">
-                        EFT Pending
-                      </span>
-                    </div>
-
-                    <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-2.5 text-xs space-y-1.5 font-mono">
-                      <div className="flex justify-between items-center text-slate-300">
-                        <span className="text-slate-500 text-[10px]">Reference:</span>
-                        <span className="font-bold text-amber-400 bg-amber-950/40 px-1.5 py-0.5 rounded border border-amber-800/40 select-all">
-                          {ref}
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center text-slate-300">
-                        <span className="text-slate-500 text-[10px]">Amount:</span>
-                        <span className="font-bold text-emerald-400">R{amount}.00 ZAR</span>
-                      </div>
-                      <div className="flex justify-between items-center text-slate-300">
-                        <span className="text-slate-500 text-[10px]">Submitted:</span>
-                        <span className="text-[10px] text-slate-400">{submittedDate}</span>
-                      </div>
-                    </div>
-
-                    <div className="space-y-1">
-                      <p className="text-xs text-slate-300"><span className="text-slate-500">Owner:</span> {m.ownerName}</p>
-                      <p className="text-xs text-slate-300"><span className="text-slate-500">Phone:</span> {m.phoneNumber}</p>
-                      {m.email && (
-                        <p className="text-xs text-slate-300"><span className="text-slate-500">Email:</span> {m.email}</p>
-                      )}
-                    </div>
-
-                    <div className="flex gap-2 pt-1">
-                      <button
-                        onClick={() => handleApprovePayment(m.id, merchantPayment?.id)}
-                        className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[10px] px-3 py-2 rounded-lg transition cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
-                      >
-                        <CheckCircle className="w-3.5 h-3.5" /> Approve Payment
-                      </button>
-                      <button
-                        onClick={() => handleOpenRejection(m.id, merchantPayment?.id)}
-                        className="flex-1 bg-red-950 hover:bg-red-900 border border-red-800 text-red-300 font-extrabold text-[10px] px-3 py-2 rounded-lg transition cursor-pointer flex items-center justify-center gap-1.5"
-                      >
-                        <XCircle className="w-3.5 h-3.5" /> Reject Payment
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        )}
-
-        {pendingMerchants.length === 0 && statusFilter === 'payment_pending' && (
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center">
-            <CheckCircle className="w-8 h-8 text-emerald-600 mx-auto mb-2" />
-            <p className="text-sm font-bold text-slate-300">No payments currently require approval.</p>
-            <p className="text-[10px] text-slate-500 mt-1">All merchant payments have been processed.</p>
+        {/* Stats */}
+        {adminSection === 'shops' ? (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {[
+              { label: 'Total Shops', value: shops.length, color: 'text-white' },
+              { label: 'Active', value: shops.filter(s => s.status === 'active').length, color: 'text-emerald-400' },
+              { label: 'Pending', value: shops.filter(s => s.status === 'pending').length, color: 'text-amber-400' },
+              { label: 'Suspended', value: shops.filter(s => s.status === 'suspended').length, color: 'text-red-400' },
+            ].map(({ label, value, color }) => (
+              <div key={label} className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">{label}</span>
+                <span className={`text-2xl font-black mt-1 block ${color}`}>{value}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {[
+              { label: 'Est. MRR', value: `R${shops.filter(s => s.status === 'active').reduce((sum, s) => sum + planPrice(s.plan), 0)}`, color: 'text-emerald-400' },
+              { label: 'Starter (R100)', value: shops.filter(s => !s.plan || s.plan === 'starter').length, color: 'text-white' },
+              { label: 'Growth (R200)', value: shops.filter(s => s.plan === 'growth').length, color: 'text-blue-400' },
+              { label: 'Pro (R350)', value: shops.filter(s => s.plan === 'pro').length, color: 'text-purple-400' },
+            ].map(({ label, value, color }) => (
+              <div key={label} className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">{label}</span>
+                <span className={`text-2xl font-black mt-1 block ${color}`}>{value}</span>
+              </div>
+            ))}
           </div>
         )}
 
-        {/* SECTION 3 — FILTERS & SEARCH */}
-        <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
+        {/* Search + filter */}
+        <div className="flex flex-col md:flex-row gap-3 items-center bg-slate-900 border border-slate-800 p-3 rounded-2xl">
           <div className="relative w-full md:w-80">
-            <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              placeholder="Search store or owner..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition"
-            />
+            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+            <input type="text" placeholder="Search ID, name, owner, phone..." value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="w-full pl-9 pr-4 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 outline-none focus:border-indigo-500" />
           </div>
-
-          <div className="flex flex-wrap gap-1.5 w-full md:w-auto">
-            {(['all', 'trial', 'payment_pending', 'active', 'rejected', 'suspended'] as const).map(f => {
-              const count = f === 'all' ? merchants.length : merchants.filter(m => m.subscriptionStatus === f || (f === 'trial' && !m.subscriptionStatus)).length;
-              const isPending = f === 'payment_pending' && count > 0;
-              return (
-                <button
-                  key={f}
-                  onClick={() => setStatusFilter(f)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold capitalize transition cursor-pointer flex items-center gap-1.5 ${
-                    statusFilter === f
-                      ? 'bg-indigo-600 text-white'
-                      : isPending
-                        ? 'bg-indigo-950 text-indigo-300 border border-indigo-900 hover:bg-indigo-900'
-                        : 'bg-slate-900 text-slate-400 hover:bg-slate-800 border border-slate-800'
-                  }`}
-                >
-                  {f.replace('_', ' ')}
-                  <span className={`text-[10px] ${isPending ? 'text-indigo-400' : 'opacity-60'}`}>({count})</span>
-                  {isPending && <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-pulse" />}
-                </button>
-              );
-            })}
+          <div className="flex gap-1.5">
+            {(['all', 'active', 'pending', 'suspended'] as const).map(tab => (
+              <button key={tab} onClick={() => setStatusFilter(tab)}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold capitalize transition cursor-pointer ${
+                  statusFilter === tab ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+                }`}>
+                {tab}
+              </button>
+            ))}
           </div>
         </div>
 
-        {/* SECTION 4 — MERCHANT MANAGEMENT */}
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-black text-slate-200">Merchant Directory</h2>
-            <span className="text-[10px] text-slate-500 font-bold">{filteredMerchants.length} result{filteredMerchants.length !== 1 ? 's' : ''}</span>
-          </div>
-
-          {filteredMerchants.length === 0 ? (
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-12 text-center space-y-2">
-              <Users className="w-10 h-10 text-slate-700 mx-auto" />
-              <p className="text-slate-400 text-xs font-bold">No merchants match current filters.</p>
-              <p className="text-[10px] text-slate-500">Adjust your search or status filter.</p>
+        {/* Shops grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {filteredShops.length === 0 ? (
+            <div className="col-span-full bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center text-slate-500">
+              <Users className="w-8 h-8 mx-auto mb-2 opacity-50" />
+              <p className="text-sm font-semibold">No shops found.</p>
             </div>
-          ) : (
-            <div className="space-y-3">
-              {filteredMerchants.map(m => {
-                const now = new Date();
-                const createdDate = m.createdAt ? new Date(m.createdAt) : new Date();
-                const defaultTrialEnd = new Date(createdDate.getTime() + 7 * 24 * 60 * 60 * 1000);
-                const trialEnds = m.trialEndsAt ? new Date(m.trialEndsAt) : defaultTrialEnd;
-                const calculatedDaysLeft = Math.max(0, Math.ceil((trialEnds.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
-                const isTrialExpired = calculatedDaysLeft === 0 && m.subscriptionStatus !== 'active';
+          ) : filteredShops.map(shop => (
+            <div key={shop.shopId} className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4 hover:border-slate-700 transition relative overflow-hidden">
+              <div className={`absolute top-0 left-0 right-0 h-1 ${
+                shop.status === 'active' ? 'bg-emerald-500' : shop.status === 'pending' ? 'bg-amber-500' : 'bg-red-500'
+              }`} />
 
-                return (
-                  <div key={m.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 md:p-5 hover:border-slate-700 transition">
-                    <div className="flex flex-col md:flex-row md:items-center gap-4">
-                      {/* Identity */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1 flex-wrap">
-                          <h3 className="font-black text-white text-sm truncate">{m.name}</h3>
-                          {getStatusBadge(m)}
-                        </div>
-                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-slate-400">
-                          <span className="flex items-center gap-1">
-                            <Users className="w-3 h-3" /> {m.ownerName}
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <Smartphone className="w-3 h-3" /> {m.phoneNumber}
-                          </span>
-                          {m.email && (
-                            <span className="flex items-center gap-1 truncate max-w-[200px]">
-                              <span className="text-slate-600">@</span> {m.email}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Timeline Summary */}
-                      <div className="text-[10px] text-slate-400 md:text-right min-w-[140px]">
-                        {m.subscriptionStatus === 'active' && m.nextRenewalDate ? (
-                          <div className="flex items-center md:justify-end gap-1">
-                            <Calendar className="w-3 h-3 text-emerald-500" />
-                            <span>Renews {new Date(m.nextRenewalDate).toLocaleDateString()}</span>
-                          </div>
-                        ) : (
-                          <div className="flex items-center md:justify-end gap-1">
-                            <Clock className="w-3 h-3 text-amber-500" />
-                            <span>
-                              {isTrialExpired ? 'Trial ended' : `${calculatedDaysLeft} days left`}
-                              {' — '}{trialEnds.toLocaleDateString()}
-                            </span>
-                          </div>
-                        )}
-                        {m.rejectionReason && (
-                          <p className="text-red-400 truncate max-w-[200px] md:ml-auto" title={m.rejectionReason}>
-                            {m.rejectionReason}
-                          </p>
-                        )}
-                      </div>
-
-                      {/* Primary Actions */}
-                      <div className="flex items-center gap-2 md:justify-end">
-                        {m.subscriptionStatus === 'payment_pending' && (
-                          <>
-                            <button
-                              onClick={() => handleApprovePayment(m.id)}
-                              className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[10px] px-3 py-2 rounded-lg transition cursor-pointer flex items-center gap-1"
-                            >
-                              <CheckCircle className="w-3.5 h-3.5" /> Approve
-                            </button>
-                            <button
-                              onClick={() => handleOpenRejection(m.id)}
-                              className="bg-red-950 hover:bg-red-900 border border-red-800 text-red-300 font-extrabold text-[10px] px-3 py-2 rounded-lg transition cursor-pointer flex items-center gap-1"
-                            >
-                              <XCircle className="w-3.5 h-3.5" /> Reject
-                            </button>
-                          </>
-                        )}
-                        {m.subscriptionStatus === 'suspended' && (
-                          <button
-                            onClick={() => handleSuspendStore(m.id, false)}
-                            className="bg-emerald-950 border border-emerald-900 text-emerald-400 hover:bg-emerald-900 transition font-bold text-[10px] px-3 py-2 rounded-lg flex items-center gap-1 cursor-pointer"
-                          >
-                            <Unlock className="w-3.5 h-3.5" /> Restore
-                          </button>
-                        )}
-                        <button
-                          onClick={() => { setSelectedMerchant(m); setShowDevControls(false); }}
-                          className="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold text-[10px] px-3 py-2 rounded-lg transition cursor-pointer flex items-center gap-1"
-                        >
-                          <Eye className="w-3.5 h-3.5" /> Details
-                        </button>
-                      </div>
-                    </div>
+              <div className="flex items-start justify-between">
+                <div>
+                  <div className="flex items-center gap-1">
+                    <span className="bg-slate-800 text-indigo-400 font-mono font-black text-xs px-2.5 py-1 rounded-lg border border-slate-700 tracking-wider">
+                      {shop.shopId}
+                    </span>
+                    <button onClick={() => handleCopy(shop)} title="Copy access info"
+                      className="text-slate-500 hover:text-white p-1 rounded hover:bg-slate-800 cursor-pointer">
+                      {copiedId === shop.shopId
+                        ? <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        : <Copy className="w-3.5 h-3.5" />}
+                    </button>
                   </div>
-                );
-              })}
+                  <h3 className="font-black text-base text-white mt-2">{shop.name}</h3>
+                  <p className="text-xs text-slate-400">{shop.category}</p>
+                  <span className={`text-[10px] font-black px-2 py-0.5 rounded-md border mt-1 inline-block ${
+                    shop.plan === 'pro' ? 'bg-purple-950/50 text-purple-400 border-purple-800/40' :
+                    shop.plan === 'growth' ? 'bg-blue-950/50 text-blue-400 border-blue-800/40' :
+                    'bg-slate-800/60 text-slate-400 border-slate-700/50'
+                  }`}>
+                    {(shop.plan || 'starter').charAt(0).toUpperCase() + (shop.plan || 'starter').slice(1)} — R{planPrice(shop.plan)}/mo
+                  </span>
+                </div>
+                <span className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-full border ${
+                  shop.status === 'active' ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800/60' :
+                  shop.status === 'pending' ? 'bg-amber-950/60 text-amber-400 border-amber-800/60' :
+                  'bg-red-950/60 text-red-400 border-red-800/60'
+                }`}>
+                  {shop.status}
+                </span>
+              </div>
+
+              <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-3 text-xs space-y-1 text-slate-300">
+                <p><span className="text-slate-500">Owner:</span> {shop.ownerName}</p>
+                <p><span className="text-slate-500">Phone:</span> {shop.phoneNumber || '—'}</p>
+                {shop.address && <p><span className="text-slate-500">Address:</span> {shop.address}</p>}
+              </div>
+
+              <div className="pt-2 border-t border-slate-800 flex flex-wrap gap-2">
+                {shop.status !== 'active' && (
+                  <button onClick={() => handleStatusChange(shop.shopId, 'active')}
+                    className="flex-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 font-bold text-xs py-1.5 px-2.5 rounded-lg transition cursor-pointer">
+                    Activate
+                  </button>
+                )}
+                {shop.status !== 'suspended' && (
+                  <button onClick={() => handleStatusChange(shop.shopId, 'suspended')}
+                    className="flex-1 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/30 font-bold text-xs py-1.5 px-2.5 rounded-lg transition cursor-pointer">
+                    Suspend
+                  </button>
+                )}
+                {shop.status !== 'pending' && (
+                  <button onClick={() => handleStatusChange(shop.shopId, 'pending')}
+                    className="bg-amber-600/20 hover:bg-amber-600/30 text-amber-400 border border-amber-500/30 font-bold text-xs py-1.5 px-2.5 rounded-lg transition cursor-pointer">
+                    Pending
+                  </button>
+                )}
+                <button onClick={() => { setShowResetPinModal(shop); setResetPinValue(''); setPinModalError(null); }}
+                  className="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 font-bold text-xs py-1.5 px-2.5 rounded-lg transition flex items-center gap-1 cursor-pointer">
+                  <KeyRound className="w-3.5 h-3.5 text-amber-400" /> PIN
+                </button>
+                <button onClick={() => {
+                  setShowEditModal(shop);
+                  setEditName(shop.name); setEditOwner(shop.ownerName);
+                  setEditPhone(shop.phoneNumber); setEditEmail(shop.email || '');
+                  setEditCategory(shop.category || ''); setEditAddress(shop.address || '');
+                  setEditPlan((shop.plan as any) || 'starter');
+                }}
+                  className="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 font-bold text-xs py-1.5 px-2.5 rounded-lg transition flex items-center gap-1 cursor-pointer">
+                  <Edit3 className="w-3.5 h-3.5" />
+                </button>
+                <button onClick={() => handleDeleteShop(shop.shopId, shop.name)}
+                  className="bg-red-950/40 hover:bg-red-900/60 text-red-400 border border-red-800/40 font-bold text-xs py-1.5 px-2.5 rounded-lg transition flex items-center gap-1 cursor-pointer">
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
-          )}
+          ))}
         </div>
       </main>
 
-      {/* MERCHANT DETAIL MODAL */}
-      {selectedMerchant && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-lg w-full p-6 space-y-5 my-8 shadow-2xl">
-            {/* Header */}
-            <div className="flex items-start justify-between">
-              <div>
-                <h2 className="text-lg font-black text-white">{selectedMerchant.name}</h2>
-                <p className="text-[10px] text-slate-400 mt-0.5">{selectedMerchant.category} — ID: {selectedMerchant.id.slice(0, 8)}</p>
-              </div>
-              <button
-                onClick={() => setSelectedMerchant(null)}
-                className="text-slate-400 hover:text-white transition cursor-pointer"
-              >
-                <XCircle className="w-5 h-5" />
-              </button>
-            </div>
+      {/* CREATE MODAL */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-lg w-full p-6 text-white shadow-2xl relative my-8">
+            <button onClick={() => setShowCreateModal(false)} className="absolute top-5 right-5 text-slate-400 hover:text-white">
+              <X className="w-5 h-5" />
+            </button>
+            <h2 className="text-lg font-black mb-1">Create New Shop</h2>
+            <p className="text-xs text-slate-400 mb-4">Assign a Shop ID and PIN. PIN is stored encrypted.</p>
 
-            {/* Info Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-              <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 space-y-1">
-                <span className="text-[10px] font-black uppercase text-slate-500 block">Owner</span>
-                <span className="text-slate-200 font-bold block">{selectedMerchant.ownerName}</span>
-              </div>
-              <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 space-y-1">
-                <span className="text-[10px] font-black uppercase text-slate-500 block">Phone</span>
-                <span className="text-slate-200 font-bold block">{selectedMerchant.phoneNumber}</span>
-              </div>
-              <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 space-y-1">
-                <span className="text-[10px] font-black uppercase text-slate-500 block">Email</span>
-                <span className="text-slate-200 font-bold block truncate">{selectedMerchant.email || 'Not provided'}</span>
-              </div>
-              <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 space-y-1">
-                <span className="text-[10px] font-black uppercase text-slate-500 block">Status</span>
-                <div className="pt-0.5">{getStatusBadge(selectedMerchant)}</div>
-              </div>
-            </div>
+            {formError && <div className="bg-red-950/60 border border-red-900/60 text-red-400 p-3 rounded-xl text-xs mb-3">{formError}</div>}
+            {formSuccess && <div className="bg-emerald-950/60 border border-emerald-900/60 text-emerald-400 p-3 rounded-xl text-xs mb-3">{formSuccess}</div>}
 
-            {/* Email Verification */}
-            <div className="bg-slate-950 border border-slate-800 rounded-xl p-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className={`w-2 h-2 rounded-full ${selectedMerchant.isEmailVerified ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-                  <span className="text-xs font-bold text-slate-200">
-                    {selectedMerchant.isEmailVerified ? 'Email Verified' : 'Email Unverified'}
-                  </span>
+            <form onSubmit={handleCreateShop} className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">Shop ID *</label>
+                  <input type="text" placeholder="MEC001" value={newShopId}
+                    onChange={e => setNewShopId(e.target.value.toUpperCase().replace(/[^A-Z0-9_-]/g, ''))}
+                    className="w-full px-3.5 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white font-mono font-bold uppercase outline-none focus:border-indigo-500" required />
                 </div>
-                <button
-                  onClick={() => {
-                    const updated = { ...selectedMerchant, isEmailVerified: !selectedMerchant.isEmailVerified };
-                    onUpdateMerchant(updated);
-                    setSelectedMerchant(updated);
-                  }}
-                  className="text-[10px] font-black bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 px-3 py-1.5 rounded-lg transition cursor-pointer"
-                >
-                  {selectedMerchant.isEmailVerified ? 'Revoke Verification' : 'Verify Email'}
+                <div>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">PIN * (4–16 digits)</label>
+                  <input type="text" placeholder="4827" value={newPin}
+                    onChange={e => setNewPin(e.target.value.replace(/\D/g, '').slice(0, 16))}
+                    className="w-full px-3.5 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white font-mono font-bold outline-none focus:border-indigo-500" required />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-300 block mb-1">Shop Name *</label>
+                <input type="text" placeholder="e.g. Mpho Spaza & Wholesale" value={newName}
+                  onChange={e => setNewName(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white outline-none focus:border-indigo-500" required />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">Owner Name</label>
+                  <input type="text" placeholder="Full name" value={newOwner}
+                    onChange={e => setNewOwner(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white outline-none focus:border-indigo-500" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">Phone</label>
+                  <input type="tel" placeholder="+27 72 000 0000" value={newPhone}
+                    onChange={e => setNewPhone(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white outline-none focus:border-indigo-500" />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-300 block mb-1">Category</label>
+                <select value={newCategory} onChange={e => setNewCategory(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white outline-none focus:border-indigo-500">
+                  <option>Grocery & Spaza Shop</option>
+                  <option>Auto Mechanic & Spares</option>
+                  <option>Bakery & Confectionery</option>
+                  <option>Butchery & Meat Market</option>
+                  <option>General Retail</option>
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">Status</label>
+                  <select value={newStatus} onChange={e => setNewStatus(e.target.value as any)}
+                    className="w-full px-3.5 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white outline-none">
+                    <option value="active">Active</option>
+                    <option value="pending">Pending</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">Plan</label>
+                  <select value={newPlan} onChange={e => setNewPlan(e.target.value as any)}
+                    className="w-full px-3.5 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white outline-none">
+                    <option value="starter">Starter (R100/mo)</option>
+                    <option value="growth">Growth (R200/mo)</option>
+                    <option value="pro">Pro (R350/mo)</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-300 block mb-1">Address</label>
+                <input type="text" placeholder="Zone 4, Meadowlands" value={newAddress}
+                  onChange={e => setNewAddress(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white outline-none focus:border-indigo-500" />
+              </div>
+              <div className="pt-2 flex justify-end gap-2">
+                <button type="button" onClick={() => setShowCreateModal(false)}
+                  className="px-4 py-2.5 bg-slate-800 text-slate-300 rounded-xl text-xs font-bold">Cancel</button>
+                <button type="submit" disabled={formLoading}
+                  className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black flex items-center gap-1.5 disabled:opacity-50">
+                  {formLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  Create & Save Shop
                 </button>
               </div>
-            </div>
-
-            {/* Timeline */}
-            <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-2">
-              <h4 className="text-[10px] font-black uppercase text-slate-500">Subscription Timeline</h4>
-              {selectedMerchant.subscriptionStatus === 'active' ? (
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-slate-400">Next Renewal</span>
-                  <span className="text-emerald-400 font-bold">
-                    {selectedMerchant.nextRenewalDate ? new Date(selectedMerchant.nextRenewalDate).toLocaleDateString() : 'N/A'}
-                  </span>
-                </div>
-              ) : (
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-slate-400">Trial Ends</span>
-                  <span className="text-amber-400 font-bold">
-                    {selectedMerchant.trialEndsAt ? new Date(selectedMerchant.trialEndsAt).toLocaleDateString() : 'N/A'}
-                  </span>
-                </div>
-              )}
-              <button
-                onClick={() => { setSelectedMerchant(null); handleOpenDateAdjuster(selectedMerchant); }}
-                className="text-[10px] text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer font-bold"
-              >
-                <Calendar className="w-3 h-3" /> Adjust Timeline
-              </button>
-            </div>
-
-            {/* Administrative Actions */}
-            <div className="space-y-2">
-              <h4 className="text-[10px] font-black uppercase text-slate-500">Administrative Actions</h4>
-              <div className="flex flex-wrap gap-2">
-                {selectedMerchant.subscriptionStatus === 'payment_pending' && (
-                  <>
-                    <button
-                      onClick={() => { handleApprovePayment(selectedMerchant.id); setSelectedMerchant(null); }}
-                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[10px] px-4 py-2 rounded-lg transition cursor-pointer flex items-center gap-1.5"
-                    >
-                      <CheckCircle className="w-3.5 h-3.5" /> Approve Payment
-                    </button>
-                    <button
-                      onClick={() => { setSelectedMerchant(null); handleOpenRejection(selectedMerchant.id); }}
-                      className="bg-red-950 hover:bg-red-900 border border-red-800 text-red-300 font-extrabold text-[10px] px-4 py-2 rounded-lg transition cursor-pointer flex items-center gap-1.5"
-                    >
-                      <XCircle className="w-3.5 h-3.5" /> Reject Payment
-                    </button>
-                  </>
-                )}
-                {selectedMerchant.subscriptionStatus === 'suspended' ? (
-                  <button
-                    onClick={() => { handleSuspendStore(selectedMerchant.id, false); setSelectedMerchant(null); }}
-                    className="bg-emerald-950 border border-emerald-900 text-emerald-400 hover:bg-emerald-900 transition font-bold text-[10px] px-4 py-2 rounded-lg flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Unlock className="w-3.5 h-3.5" /> Unsuspend Store
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => { handleSuspendStore(selectedMerchant.id, true); setSelectedMerchant(null); }}
-                    className="bg-red-950/50 hover:bg-red-950 border border-red-900 text-red-400 transition font-bold text-[10px] px-4 py-2 rounded-lg flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Lock className="w-3.5 h-3.5" /> Suspend Store
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Development / Testing Controls */}
-            <div className="border-t border-slate-800 pt-4">
-              <button
-                onClick={() => setShowDevControls(v => !v)}
-                className="flex items-center gap-2 text-[10px] font-black uppercase text-slate-500 hover:text-slate-300 transition cursor-pointer mb-3"
-              >
-                <Wrench className="w-3.5 h-3.5" />
-                Development & Testing Controls
-                <ChevronRight className={`w-3 h-3 transition-transform ${showDevControls ? 'rotate-90' : ''}`} />
-              </button>
-              
-              {showDevControls && (
-                <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-3">
-                  <p className="text-[10px] text-slate-500">These actions modify system dates for testing purposes only.</p>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      onClick={() => { handleForceTrialExpiry(selectedMerchant.id); setSelectedMerchant(null); }}
-                      className="text-[10px] text-amber-400 hover:text-amber-300 font-bold bg-amber-950/30 border border-amber-900/50 px-3 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1"
-                    >
-                      <AlertTriangle className="w-3 h-3" /> Force Trial Expiry
-                    </button>
-                    <button
-                      onClick={() => { handleForceActiveExpiry(selectedMerchant.id); setSelectedMerchant(null); }}
-                      className="text-[10px] text-amber-400 hover:text-amber-300 font-bold bg-amber-950/30 border border-amber-900/50 px-3 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1"
-                    >
-                      <AlertTriangle className="w-3 h-3" /> Force Active Expiry
-                    </button>
-                    <button
-                      onClick={() => { setSelectedMerchant(null); handleOpenDateAdjuster(selectedMerchant); }}
-                      className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold bg-indigo-950/30 border border-indigo-900/50 px-3 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1"
-                    >
-                      <Calendar className="w-3 h-3" /> Adjust Timeline
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
+            </form>
           </div>
         </div>
       )}
 
-      {/* Rejection Reason Input Modal */}
-      {rejectionModalMerchantId && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full p-6 space-y-4">
-            <h3 className="text-sm font-black uppercase tracking-wider text-slate-200">Rejection Reason</h3>
-            <p className="text-xs text-slate-400">Specify why the payment was rejected. The merchant will see this and be allowed to resubmit their details.</p>
-            
-            <textarea
-              rows={4}
-              value={rejectionReason}
-              onChange={(e) => setRejectionReason(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-red-500"
-              placeholder="e.g. Deposit reference not matching..."
-            />
-
-            <div className="flex gap-2 justify-end">
-              <button
-                onClick={() => setRejectionModalMerchantId(null)}
-                className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-bold px-4 py-2 rounded-xl transition cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmRejection}
-                className="bg-red-600 hover:bg-red-700 text-white text-[11px] font-black px-4 py-2 rounded-xl transition cursor-pointer"
-              >
-                Confirm Rejection & Notify Shop
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Date Adjuster Modal */}
-      {dateModalMerchant && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-sm w-full p-6 space-y-4">
-            <h3 className="text-sm font-black uppercase tracking-wider text-slate-200">Adjust System Dates</h3>
-            <p className="text-[11px] text-slate-400 leading-normal">
-              Adjust the system dates for <strong>{dateModalMerchant.name}</strong> to test trial expired lockout state and renewal warning states instantly.
+      {/* RESET PIN MODAL */}
+      {showResetPinModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-sm w-full p-6 text-white shadow-2xl relative">
+            <button onClick={() => setShowResetPinModal(null)} className="absolute top-5 right-5 text-slate-400 hover:text-white">
+              <X className="w-5 h-5" />
+            </button>
+            <h2 className="text-base font-black mb-1">Reset PIN</h2>
+            <p className="text-xs text-slate-400 mb-4">
+              New PIN for <strong className="text-white">{showResetPinModal.name}</strong> ({showResetPinModal.shopId})
             </p>
-
-            <div className="space-y-3">
-              <div>
-                <label className="block text-[10px] font-black uppercase text-slate-400 mb-1">
-                  Trial Ends At
-                </label>
-                <input
-                  type="date"
-                  value={customTrialDate}
-                  onChange={(e) => setCustomTrialDate(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200"
-                />
+            {pinModalError && <div className="bg-red-950/60 border border-red-900/60 text-red-400 p-2.5 rounded-xl text-xs mb-3">{pinModalError}</div>}
+            <form onSubmit={handleResetPin} className="space-y-4">
+              <input type="password" placeholder="New PIN (4–16 digits)" maxLength={16}
+                value={resetPinValue} onChange={e => setResetPinValue(e.target.value.replace(/\D/g, ''))}
+                autoFocus
+                className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-sm font-mono tracking-widest text-white outline-none focus:border-indigo-500" />
+              <div className="flex justify-end gap-2">
+                <button type="button" onClick={() => setShowResetPinModal(null)}
+                  className="px-4 py-2 bg-slate-800 text-slate-300 rounded-xl text-xs font-bold">Cancel</button>
+                <button type="submit" disabled={pinLoading}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black flex items-center gap-1.5 disabled:opacity-50">
+                  {pinLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  Save PIN
+                </button>
               </div>
-
-              <div>
-                <label className="block text-[10px] font-black uppercase text-slate-400 mb-1">
-                  Next Renewal Date (Active Plans)
-                </label>
-                <input
-                  type="date"
-                  value={customRenewalDate}
-                  onChange={(e) => setCustomRenewalDate(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200"
-                />
-              </div>
-            </div>
-
-            <div className="flex gap-2 justify-end pt-2">
-              <button
-                onClick={() => setDateModalMerchant(null)}
-                className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-bold px-4 py-2 rounded-xl transition cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSaveDates}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-black px-4 py-2 rounded-xl transition cursor-pointer"
-              >
-                Save Timeline Changes
-              </button>
-            </div>
+            </form>
           </div>
         </div>
       )}
-      
+
+      {/* EDIT MODAL */}
+      {showEditModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full p-6 text-white shadow-2xl relative">
+            <button onClick={() => setShowEditModal(null)} className="absolute top-5 right-5 text-slate-400 hover:text-white">
+              <X className="w-5 h-5" />
+            </button>
+            <h2 className="text-base font-black mb-1">Edit Shop</h2>
+            <p className="text-xs text-slate-400 mb-4">{showEditModal.shopId}</p>
+            <form onSubmit={handleEditSubmit} className="space-y-3">
+              {[
+                { label: 'Shop Name', value: editName, set: setEditName, type: 'text' },
+                { label: 'Owner Name', value: editOwner, set: setEditOwner, type: 'text' },
+                { label: 'Phone', value: editPhone, set: setEditPhone, type: 'tel' },
+                { label: 'Email', value: editEmail, set: setEditEmail, type: 'email' },
+                { label: 'Category', value: editCategory, set: setEditCategory, type: 'text' },
+                { label: 'Address', value: editAddress, set: setEditAddress, type: 'text' },
+              ].map(({ label, value, set, type }) => (
+                <div key={label}>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">{label}</label>
+                  <input type={type} value={value} onChange={e => set(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white outline-none focus:border-indigo-500" />
+                </div>
+              ))}
+              <div>
+                <label className="text-xs font-bold text-slate-300 block mb-1">Plan</label>
+                <select value={editPlan} onChange={e => setEditPlan(e.target.value as any)}
+                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white outline-none">
+                  <option value="starter">Starter (R100/mo)</option>
+                  <option value="growth">Growth (R200/mo)</option>
+                  <option value="pro">Pro (R350/mo)</option>
+                </select>
+              </div>
+              <div className="pt-2 flex justify-end gap-2">
+                <button type="button" onClick={() => setShowEditModal(null)}
+                  className="px-4 py-2 bg-slate-800 text-slate-300 rounded-xl text-xs font-bold">Cancel</button>
+                <button type="submit" disabled={editLoading}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black flex items-center gap-1.5 disabled:opacity-50">
+                  {editLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  Save Changes
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

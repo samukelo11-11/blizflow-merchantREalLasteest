@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 
 export interface UserRecord {
   id: string;
@@ -13,18 +14,29 @@ export interface UserRecord {
 
 export interface ShopRecord {
   id: string;
-  shop_name: string;
-  owner_id: string;
-  status: 'open' | 'closed';
-  subscription_status: 'trial' | 'active' | 'expired' | 'payment_pending' | 'suspended';
-  plan: 'starter' | 'growth' | 'pro';
-  trial_ends_at: string;
-  next_renewal_date?: string;
-  created_at: string;
+  shopId?: string;
+  name?: string;
+  shop_name?: string;
+  owner_id?: string;
+  ownerName?: string;
   owner_name?: string;
+  email?: string;
+  phoneNumber?: string;
   phone_number?: string;
   category?: string;
   address?: string;
+  status: 'active' | 'pending' | 'suspended' | 'open' | 'closed';
+  subscription_status?: 'trial' | 'active' | 'expired' | 'payment_pending' | 'suspended';
+  plan?: 'starter' | 'growth' | 'pro';
+  trial_ends_at?: string;
+  next_renewal_date?: string;
+  created_at?: string;
+  createdAt?: string;
+  onboarding_status?: 'required' | 'in_progress' | 'complete';
+  pinHash?: string;
+  pinSalt?: string;
+  pinIterations?: number;
+  notes?: string;
 }
 
 export interface SubscriptionRecord {
@@ -48,31 +60,70 @@ interface DatabaseSchema {
 const DATA_DIR = path.resolve(process.cwd(), '.data');
 const DB_FILE = path.join(DATA_DIR, 'blizflow_custom_db.json');
 
-// Ensure database directory exists
+function derivePinHashSync(pin: string, saltHex: string): string {
+  const salt = Buffer.from(saltHex, 'hex');
+  return crypto.pbkdf2Sync(pin, salt, 100_000, 32, 'sha256').toString('hex');
+}
+
+// Ensure database directory exists and initialize seed shops
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
 }
 
+function getInitialDb(): DatabaseSchema {
+  const now = new Date().toISOString();
+  return {
+    users: {
+      'admin-system': {
+        id: 'admin-system',
+        name: 'System Administrator',
+        email: 'admin@blizflow.co.za',
+        password_hash: '$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW', // admin123
+        shop_id: 'ALL',
+        role: 'admin',
+        created_at: now
+      },
+      'admin-owner': {
+        id: 'admin-owner',
+        name: 'Admin Samukelo',
+        email: 'mngomezulusamukelo6@gmail.com',
+        password_hash: '$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW', // admin123
+        shop_id: 'ALL',
+        role: 'admin',
+        created_at: now
+      }
+    },
+    shops: {},
+    subscriptions: {}
+  };
+}
+
 // Read database
 function readDb(): DatabaseSchema {
   ensureDataDir();
   if (!fs.existsSync(DB_FILE)) {
-    const initialDb: DatabaseSchema = {
-      users: {},
-      shops: {},
-      subscriptions: {}
-    };
+    const initialDb = getInitialDb();
     fs.writeFileSync(DB_FILE, JSON.stringify(initialDb, null, 2), 'utf-8');
     return initialDb;
   }
   try {
     const raw = fs.readFileSync(DB_FILE, 'utf-8');
-    return JSON.parse(raw);
+    const parsed: DatabaseSchema = JSON.parse(raw);
+    
+    // Ensure admin user exists in database
+    if (!parsed.users || !Object.values(parsed.users).some(u => u.email.toLowerCase() === 'admin@blizflow.co.za')) {
+      const initial = getInitialDb();
+      if (!parsed.users) parsed.users = {};
+      parsed.users['admin-system'] = initial.users['admin-system'];
+      parsed.users['admin-owner'] = initial.users['admin-owner'];
+      fs.writeFileSync(DB_FILE, JSON.stringify(parsed, null, 2), 'utf-8');
+    }
+    return parsed;
   } catch (err) {
     console.error('[DB] Failed to read database, creating fresh structure:', err);
-    return { users: {}, shops: {}, subscriptions: {} };
+    return getInitialDb();
   }
 }
 
@@ -121,22 +172,41 @@ export async function updateUser(id: string, updates: Partial<UserRecord>): Prom
 
 export async function findShopById(id: string): Promise<ShopRecord | null> {
   const db = readDb();
-  return db.shops[id] || null;
+  const upper = id.trim().toUpperCase();
+  return db.shops[upper] || db.shops[id] || null;
+}
+
+export async function readAllShops(): Promise<ShopRecord[]> {
+  const db = readDb();
+  return Object.values(db.shops);
 }
 
 export async function insertShop(shop: ShopRecord): Promise<ShopRecord> {
   const db = readDb();
-  db.shops[shop.id] = shop;
+  const cleanId = (shop.id || shop.shopId || '').trim().toUpperCase();
+  const record = { ...shop, id: cleanId, shopId: cleanId };
+  db.shops[cleanId] = record;
   writeDb(db);
-  return shop;
+  return record;
 }
 
 export async function updateShop(id: string, updates: Partial<ShopRecord>): Promise<ShopRecord | null> {
   const db = readDb();
-  if (!db.shops[id]) return null;
-  db.shops[id] = { ...db.shops[id], ...updates };
+  const cleanId = id.trim().toUpperCase();
+  if (!db.shops[cleanId]) return null;
+  db.shops[cleanId] = { ...db.shops[cleanId], ...updates };
   writeDb(db);
-  return db.shops[id];
+  return db.shops[cleanId];
+}
+
+export async function deleteShop(id: string): Promise<boolean> {
+  const db = readDb();
+  const cleanId = id.trim().toUpperCase();
+  if (!db.shops[cleanId] && !db.shops[id]) return false;
+  delete db.shops[cleanId];
+  delete db.shops[id];
+  writeDb(db);
+  return true;
 }
 
 // ── SUBSCRIPTION REPOSITORY ──
