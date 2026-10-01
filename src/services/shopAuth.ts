@@ -12,17 +12,53 @@ import { db } from './firebaseConfig';
 import { doc, getDoc } from 'firebase/firestore';
 
 async function safeParseJson(res: Response): Promise<any> {
+  const contentType = res.headers.get('content-type') || '';
+  if (contentType.includes('text/html')) {
+    return { success: false, isHtml: true };
+  }
   const text = await res.text().catch(() => '');
-  if (!text) {
-    return { success: res.ok };
+  if (!text || text.trim().startsWith('<!')) {
+    return { success: false, isHtml: true };
   }
   try {
     return JSON.parse(text);
   } catch {
     if (!res.ok) {
-      throw new Error(text || `Server returned ${res.status} ${res.statusText}`);
+      throw new Error(text.slice(0, 100) || `Server returned ${res.status} ${res.statusText}`);
     }
     return { success: false, error: text };
+  }
+}
+
+async function verifyPinHashWebCrypto(pin: string, saltHex: string, expectedHashHex: string, iterations = 100_000): Promise<boolean> {
+  try {
+    if (!saltHex || !expectedHashHex) return false;
+    const enc = new TextEncoder();
+    const keyMaterial = await window.crypto.subtle.importKey(
+      'raw',
+      enc.encode(pin),
+      { name: 'PBKDF2' },
+      false,
+      ['deriveBits']
+    );
+    const saltBytes = new Uint8Array(saltHex.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16)));
+    const derivedBits = await window.crypto.subtle.deriveBits(
+      {
+        name: 'PBKDF2',
+        salt: saltBytes,
+        iterations: iterations,
+        hash: 'SHA-256'
+      },
+      keyMaterial,
+      256 // 32 bytes * 8
+    );
+    const derivedHex = Array.from(new Uint8Array(derivedBits))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+    return derivedHex.toLowerCase() === expectedHashHex.toLowerCase();
+  } catch (e) {
+    console.error('[shopAuth] WebCrypto PBKDF2 verification error:', e);
+    return false;
   }
 }
 
@@ -112,7 +148,19 @@ export async function verifyShopAccess(
         message: 'This shop is pending activation by an administrator.'
       };
     }
-    if (data.pin && String(data.pin).trim() !== cleanPin) {
+
+    // PIN Verification:
+    let isPinValid = false;
+    if (data.pin && typeof data.pin === 'string' && data.pin.trim()) {
+      isPinValid = data.pin.trim() === cleanPin;
+    } else if (data.pinHash && data.pinSalt) {
+      isPinValid = await verifyPinHashWebCrypto(cleanPin, data.pinSalt, data.pinHash, data.pinIterations || 100_000);
+    } else {
+      // If no PIN has been set yet, accept and register this PIN
+      isPinValid = true;
+    }
+
+    if (!isPinValid) {
       return {
         success: false,
         reason: 'WRONG_PIN',
@@ -129,16 +177,23 @@ export async function verifyShopAccess(
     };
   } catch (fsErr: any) {
     console.error('[shopAuth] Firestore verify fallback error:', fsErr);
+    if (fsErr?.code === 'permission-denied') {
+      return {
+        success: false,
+        reason: 'ERROR',
+        message: 'Database permission denied. Please verify your Firebase Firestore rules.'
+      };
+    }
     return {
       success: false,
       reason: 'ERROR',
-      message: 'Connection error. Please check your internet connection.'
+      message: fsErr?.message || 'Connection error. Please check your internet connection.'
     };
   }
 }
 
 /**
- * Fetch current shop session from server-side HTTP-only cookie
+ * Fetch current shop session from server-side HTTP-only cookie or localStorage fallback
  */
 export async function fetchShopSession(): Promise<ShopSessionResponse> {
   try {
@@ -150,24 +205,37 @@ export async function fetchShopSession(): Promise<ShopSessionResponse> {
       }
     });
 
-    if (!res.ok) {
-      return { authenticated: false };
+    const contentType = res.headers.get('content-type') || '';
+    if (res.ok && !contentType.includes('text/html')) {
+      const data = await safeParseJson(res);
+      if (data.authenticated && data.shop) {
+        return {
+          authenticated: true,
+          shopId: data.shopId,
+          shop: normalizeShopProfile(data.shop)
+        };
+      }
     }
-
-    const data = await res.json();
-    if (data.authenticated && data.shop) {
-      return {
-        authenticated: true,
-        shopId: data.shopId,
-        shop: normalizeShopProfile(data.shop)
-      };
-    }
-
-    return { authenticated: false, message: data.message };
   } catch (err) {
     console.warn('[shopAuth] Session check error:', err);
-    return { authenticated: false };
   }
+
+  // Fallback to localStorage session (Netlify / static deployments)
+  try {
+    const saved = localStorage.getItem('blizflow_shop');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed?.id || parsed?.shopId) {
+        return {
+          authenticated: true,
+          shopId: parsed.shopId || parsed.id,
+          shop: normalizeShopProfile(parsed)
+        };
+      }
+    }
+  } catch {}
+
+  return { authenticated: false };
 }
 
 /**

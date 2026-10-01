@@ -29,10 +29,17 @@ export async function fetchCurrentSession(): Promise<AuthSessionResponse> {
         'Accept': 'application/json'
       }
     });
-    if (!res.ok) {
+    const contentType = res.headers.get('content-type') || '';
+    if (!res.ok || contentType.includes('text/html')) {
       return { authenticated: false, user: null, shop: null };
     }
-    const data = await res.json();
+    const text = await res.text();
+    let data: any = {};
+    try {
+      data = JSON.parse(text);
+    } catch {
+      return { authenticated: false, user: null, shop: null };
+    }
     if (data.authenticated && data.shop) {
       // Normalize shop profile to match ShopProfile interface
       const normalizedShop: ShopProfile = {

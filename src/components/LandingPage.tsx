@@ -64,7 +64,8 @@ export default function LandingPage({ onLoginSuccess, onStartAdmin }: LandingPag
         onLoginSuccess(result.shop);
       }
     } catch (err: any) {
-      setError('Connection error. Please check your internet and try again.');
+      console.error('[LandingPage] Login exception:', err);
+      setError(err?.message || 'Verification failed. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
