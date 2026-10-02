@@ -39,6 +39,10 @@ export function isFirebaseConfigured(): boolean {
   return checkFirebaseConfig();
 }
 
+export function getSynchronousAdminUser(): AdminUser | null {
+  return currentAdminUser || getStoredAdmin();
+}
+
 async function initAdminAuth() {
   try {
     // 1. Check server-side session if backend is reachable
