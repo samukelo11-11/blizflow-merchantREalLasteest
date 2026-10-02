@@ -6,6 +6,7 @@ export default function SubscriptionManagement({ merchants, onUpdateMerchant }) 
     <AdminPanel 
       merchants={merchants} 
       onUpdateMerchant={onUpdateMerchant} 
+      defaultSection="billing"
       defaultTab="all"
     />
   );

@@ -24,7 +24,6 @@ import {
 } from 'lucide-react';
 import { ShopProfile } from '../types';
 import { verifyShopAccess } from '../services/shopAuth';
-import { getInitialDemoShop } from '../demo/demoService';
 
 interface LandingPageProps {
   onLoginSuccess: (shop: ShopProfile) => void;
@@ -71,14 +70,6 @@ export default function LandingPage({ onLoginSuccess, onStartAdmin }: LandingPag
     }
   };
 
-  const handleDemoSignIn = () => {
-    const demoShop = getInitialDemoShop();
-    localStorage.setItem('blizflow_demo_active', 'true');
-    localStorage.setItem('blizflow_shop', JSON.stringify(demoShop));
-    window.dispatchEvent(new CustomEvent('blizflow_demo_sync'));
-    onLoginSuccess(demoShop);
-  };
-
   return (
     <div className="bg-slate-50 min-h-screen flex flex-col font-sans selection:bg-indigo-500 selection:text-white" id="blizflow-landing">
       {/* Top Header */}
@@ -122,20 +113,13 @@ export default function LandingPage({ onLoginSuccess, onStartAdmin }: LandingPag
             Stop losing stock and wasting hours on paper notebooks. BlizFlow turns your phone, tablet, or laptop into a fast, offline-ready retail terminal.
           </p>
 
-          <div className="mt-8 flex flex-col sm:flex-row gap-3.5 justify-center items-center">
+          <div className="mt-8 flex justify-center items-center">
             <button
               onClick={() => setShowEnterShopModal(true)}
               className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white text-base font-black px-8 py-4 rounded-2xl transition duration-150 flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/25 cursor-pointer"
             >
               <span>Enter Shop with ID & PIN</span>
               <ArrowRight className="w-5 h-5" />
-            </button>
-            <button
-              onClick={handleDemoSignIn}
-              className="w-full sm:w-auto bg-white hover:bg-slate-100 text-slate-800 border border-slate-300/80 text-sm font-bold px-6 py-4 rounded-2xl transition duration-150 flex items-center justify-center gap-2 cursor-pointer shadow-xs"
-            >
-              <Store className="w-4 h-4 text-amber-500" />
-              <span>Explore Instant Demo</span>
             </button>
           </div>
         </div>

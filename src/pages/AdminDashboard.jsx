@@ -6,6 +6,7 @@ export default function AdminDashboard({ merchants, onUpdateMerchant }) {
     <AdminPanel 
       merchants={merchants} 
       onUpdateMerchant={onUpdateMerchant} 
+      defaultSection="overview"
       defaultTab="all"
     />
   );

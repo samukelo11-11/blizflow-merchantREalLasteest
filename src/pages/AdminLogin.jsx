@@ -36,8 +36,8 @@ const ArrowLeftIcon = () => (
 export default function AdminLogin() {
   const navigate = useNavigate();
   const location = useLocation();
-  const [email, setEmail] = useState('admin@blizflow.co.za');
-  const [password, setPassword] = useState('admin123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -62,15 +62,18 @@ export default function AdminLogin() {
     e.preventDefault();
     setError('');
 
-    if (!email) {
+    const cleanEmail = email.trim();
+    const cleanPassword = password.trim();
+
+    if (!cleanEmail) {
       setError('Email address is required.');
       return;
     }
-    if (!validateEmail(email)) {
+    if (!validateEmail(cleanEmail)) {
       setError('Please enter a valid email address.');
       return;
     }
-    if (!password) {
+    if (!cleanPassword) {
       setError('Password is required.');
       return;
     }
@@ -78,7 +81,7 @@ export default function AdminLogin() {
     setLoading(true);
 
     try {
-      await loginAdmin(email, password, rememberMe);
+      await loginAdmin(cleanEmail, cleanPassword, rememberMe);
       const from = location.state?.from || '/admin/dashboard';
       navigate(from, { replace: true });
     } catch (err) {
@@ -120,7 +123,7 @@ export default function AdminLogin() {
               id="admin-email"
               type="email"
               autoComplete="email"
-              placeholder="admin@blizflow.co.za"
+              placeholder="Enter administrator email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               disabled={loading}
@@ -136,7 +139,7 @@ export default function AdminLogin() {
                 id="admin-password"
                 type={showPassword ? 'text' : 'password'}
                 autoComplete="current-password"
-                placeholder="Enter your password"
+                placeholder="••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 disabled={loading}

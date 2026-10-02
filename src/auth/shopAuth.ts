@@ -31,6 +31,8 @@ export interface ShopRecord {
   plan?: 'starter' | 'growth' | 'pro';
   subscriptionStatus?: string;
   createdAt: string;
+  activatedAt?: string;
+  updatedAt?: string;
 }
 
 export interface CreateShopParams {

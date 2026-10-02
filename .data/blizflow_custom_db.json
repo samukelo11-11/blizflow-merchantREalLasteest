@@ -1,22 +1,13 @@
 {
   "users": {
-    "admin-system": {
-      "id": "admin-system",
+    "admin-blizflow-system": {
+      "id": "admin-blizflow-system",
       "name": "System Administrator",
       "email": "admin@blizflow.co.za",
-      "password_hash": "$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW",
+      "password_hash": "$2b$10$HRJ3gybPk6exvC00TS1StOZTpnBZfLijG.VHGxLP5qy7o6977EJoG",
       "shop_id": "ALL",
       "role": "admin",
-      "created_at": "2026-10-01T02:57:32.273Z"
-    },
-    "admin-owner": {
-      "id": "admin-owner",
-      "name": "Admin Samukelo",
-      "email": "mngomezulusamukelo6@gmail.com",
-      "password_hash": "$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW",
-      "shop_id": "ALL",
-      "role": "admin",
-      "created_at": "2026-10-01T02:57:32.273Z"
+      "created_at": "2026-10-02T09:58:22.617Z"
     }
   },
   "shops": {},

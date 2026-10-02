@@ -6,7 +6,8 @@ export default function MerchantManagement({ merchants, onUpdateMerchant }) {
     <AdminPanel 
       merchants={merchants} 
       onUpdateMerchant={onUpdateMerchant} 
-      defaultTab="active"
+      defaultSection="merchants"
+      defaultTab="all"
     />
   );
 }

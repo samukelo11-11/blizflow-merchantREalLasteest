@@ -13,6 +13,7 @@ export interface ShopProfile {
   trialEndsAt?: string;
   plan?: string;
   createdAt: string;
+  activatedAt?: string;
   onboardingStatus?: 'required' | 'in_progress' | 'complete';
   notes?: string;
 

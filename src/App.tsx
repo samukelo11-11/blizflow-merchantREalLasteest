@@ -662,14 +662,22 @@ export default function App() {
     try { await setDoc(doc(db, 'merchants', shop.id), { status: next }, { merge: true }); } catch {}
   }, [shop]);
 
+  const handleAdminUpdateMerchant = useCallback(async (merchantId: string, updates: Partial<ShopProfile>) => {
+    try {
+      await setDoc(doc(db, 'merchants', merchantId), { ...updates, updatedAt: new Date().toISOString() }, { merge: true });
+    } catch (e) {
+      console.warn('[Firestore] Admin update merchant error:', e);
+    }
+  }, []);
+
   return (
     <BrowserRouter>
       <Routes>
         <Route path="/admin/login" element={<AdminLogin />} />
-        <Route path="/admin" element={<AdminRouteGuard><AdminDashboard merchants={allMerchants} onUpdateMerchant={handleUpdateShop} /></AdminRouteGuard>} />
-        <Route path="/admin/dashboard" element={<AdminRouteGuard><AdminDashboard merchants={allMerchants} onUpdateMerchant={handleUpdateShop} /></AdminRouteGuard>} />
-        <Route path="/admin/merchants" element={<AdminRouteGuard><MerchantManagement merchants={allMerchants} onUpdateMerchant={handleUpdateShop} /></AdminRouteGuard>} />
-        <Route path="/admin/subscriptions" element={<AdminRouteGuard><SubscriptionManagement merchants={allMerchants} onUpdateMerchant={handleUpdateShop} /></AdminRouteGuard>} />
+        <Route path="/admin" element={<AdminRouteGuard><AdminDashboard merchants={allMerchants} onUpdateMerchant={handleAdminUpdateMerchant} /></AdminRouteGuard>} />
+        <Route path="/admin/dashboard" element={<AdminRouteGuard><AdminDashboard merchants={allMerchants} onUpdateMerchant={handleAdminUpdateMerchant} /></AdminRouteGuard>} />
+        <Route path="/admin/merchants" element={<AdminRouteGuard><MerchantManagement merchants={allMerchants} onUpdateMerchant={handleAdminUpdateMerchant} /></AdminRouteGuard>} />
+        <Route path="/admin/subscriptions" element={<AdminRouteGuard><SubscriptionManagement merchants={allMerchants} onUpdateMerchant={handleAdminUpdateMerchant} /></AdminRouteGuard>} />
         <Route path="/*" element={
           <MerchantPortal
             appAuthState={appAuthState}

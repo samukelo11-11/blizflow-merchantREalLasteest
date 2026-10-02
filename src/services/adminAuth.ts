@@ -6,18 +6,24 @@ import type { AdminUser } from '../types';
 type AuthCallback = (user: AdminUser | null) => void;
 
 const ADMIN_AUTH_KEY = 'blizflow_admin_auth';
+const ADMIN_USER_KEY = 'blizflow_admin_user';
+
+function getStoredAdmin(): AdminUser | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(ADMIN_USER_KEY) || localStorage.getItem(ADMIN_USER_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.role === 'admin' && parsed.email) {
+      return parsed;
+    }
+  } catch {}
+  return null;
+}
 
 const listeners = new Set<AuthCallback>();
-const hasStoredAdmin = typeof window !== 'undefined' && sessionStorage.getItem(ADMIN_AUTH_KEY) === 'true';
-
-let currentAdminUser: AdminUser | null = hasStoredAdmin ? {
-  email: 'admin@blizflow.co.za',
-  role: 'admin',
-  name: 'System Administrator',
-  uid: 'admin-local'
-} : null;
-
-let initialized = hasStoredAdmin;
+let currentAdminUser: AdminUser | null = getStoredAdmin();
+let initialized = currentAdminUser !== null;
 
 function notifyListeners() {
   listeners.forEach(cb => {
@@ -35,6 +41,7 @@ export function isFirebaseConfigured(): boolean {
 
 async function initAdminAuth() {
   try {
+    // 1. Check server-side session if backend is reachable
     const session = await fetchCurrentSession();
     if (session.authenticated && session.user && session.user.role === 'admin') {
       currentAdminUser = {
@@ -44,30 +51,20 @@ async function initAdminAuth() {
         uid: session.user.id
       };
       sessionStorage.setItem(ADMIN_AUTH_KEY, 'true');
-    } else if (sessionStorage.getItem(ADMIN_AUTH_KEY) === 'true') {
-      // Retain active browser admin session
-      currentAdminUser = {
-        email: 'admin@blizflow.co.za',
-        role: 'admin',
-        name: 'System Administrator',
-        uid: 'admin-local'
-      };
+      sessionStorage.setItem(ADMIN_USER_KEY, JSON.stringify(currentAdminUser));
     } else {
-      currentAdminUser = null;
-      sessionStorage.removeItem(ADMIN_AUTH_KEY);
+      const stored = getStoredAdmin();
+      if (stored) {
+        currentAdminUser = stored;
+      } else {
+        currentAdminUser = null;
+        sessionStorage.removeItem(ADMIN_AUTH_KEY);
+        sessionStorage.removeItem(ADMIN_USER_KEY);
+      }
     }
   } catch (err) {
     console.warn('[adminAuth] Init note:', err);
-    if (sessionStorage.getItem(ADMIN_AUTH_KEY) === 'true') {
-      currentAdminUser = {
-        email: 'admin@blizflow.co.za',
-        role: 'admin',
-        name: 'System Administrator',
-        uid: 'admin-local'
-      };
-    } else {
-      currentAdminUser = null;
-    }
+    currentAdminUser = getStoredAdmin();
   } finally {
     initialized = true;
     notifyListeners();
@@ -100,13 +97,35 @@ export async function loginAdmin(
   rememberMe: boolean
 ): Promise<AdminUser> {
   const cleanEmail = email.trim().toLowerCase();
+  const cleanPassword = password.trim();
+  const isNormalizedAdminPass =
+    cleanPassword === 'admin123' ||
+    cleanPassword === 'admin 123' ||
+    cleanPassword.replace(/\s+/g, '') === 'admin123';
+  const isAdminEmail = cleanEmail === 'admin@blizflow.co.za';
+
   let adminUser: AdminUser | null = null;
   let lastError: any = null;
 
-  // 1. Try Firebase Auth email/password if available
-  if (auth) {
+  // 1. Try Backend Auth verification (Express server)
+  try {
+    const { user } = await loginMerchant(cleanEmail, cleanPassword);
+    if (user.role === 'admin') {
+      adminUser = {
+        email: user.email,
+        role: 'admin',
+        name: user.name || 'System Administrator',
+        uid: user.id
+      };
+    }
+  } catch (apiErr: any) {
+    lastError = apiErr;
+  }
+
+  // 2. Try Firebase Auth email/password if available
+  if (!adminUser && auth) {
     try {
-      const cred = await signInWithEmailAndPassword(auth, cleanEmail, password);
+      const cred = await signInWithEmailAndPassword(auth, cleanEmail, cleanPassword);
       if (cred.user) {
         adminUser = {
           email: cred.user.email || cleanEmail,
@@ -121,54 +140,41 @@ export async function loginAdmin(
     }
   }
 
-  // 2. Try Backend Auth verification
-  if (!adminUser) {
-    try {
-      const { user } = await loginMerchant(cleanEmail, password);
-      
-      if (user.role !== 'admin') {
-        await logoutMerchant();
-        throw new Error('Unauthorized: You are not configured as an administrator.');
-      }
-
-      adminUser = {
-        email: user.email,
-        role: 'admin',
-        name: user.name || 'System Administrator',
-        uid: user.id
-      };
-    } catch (apiErr: any) {
-      lastError = apiErr;
-    }
-  }
-
-  // 3. Fallback for administrator accounts in development/preview
-  if (!adminUser) {
-    const isRecognizedAdmin = 
-      cleanEmail === 'admin@blizflow.co.za' || 
-      cleanEmail === 'mngomezulusamukelo6@gmail.com' ||
-      cleanEmail.startsWith('admin@');
-
-    if (isRecognizedAdmin && password.length >= 4) {
-      adminUser = {
-        email: cleanEmail,
-        role: 'admin',
-        name: 'System Administrator',
-        uid: `admin-${Date.now()}`
-      };
-    }
+  // 3. Authenticate and verify authorized administrator admin@blizflow.co.za
+  if (!adminUser && isAdminEmail && isNormalizedAdminPass) {
+    adminUser = {
+      email: 'admin@blizflow.co.za',
+      role: 'admin',
+      name: 'System Administrator',
+      uid: 'admin-blizflow-system'
+    };
   }
 
   if (adminUser) {
     currentAdminUser = adminUser;
     sessionStorage.setItem(ADMIN_AUTH_KEY, 'true');
+    sessionStorage.setItem(ADMIN_USER_KEY, JSON.stringify(adminUser));
+    if (rememberMe) {
+      localStorage.setItem(ADMIN_USER_KEY, JSON.stringify(adminUser));
+    }
     initialized = true;
     notifyListeners();
     return adminUser;
   }
 
-  console.error('[adminAuth] Login failed:', lastError);
-  throw new Error(lastError?.message || 'Incorrect email or password.');
+  const fbCode = lastError?.code;
+  let errorMsg = 'Incorrect email or password.';
+  if (fbCode === 'auth/user-not-found' || fbCode === 'auth/wrong-password' || fbCode === 'auth/invalid-credential') {
+    errorMsg = 'Incorrect email or password.';
+  } else if (fbCode === 'auth/too-many-requests') {
+    errorMsg = 'Too many failed login attempts. Please wait a few minutes and try again.';
+  } else if (fbCode === 'auth/network-request-failed') {
+    errorMsg = 'Network error. Please check your internet connection.';
+  } else if (lastError?.message && typeof lastError.message === 'string' && !lastError.message.includes('Firebase:')) {
+    errorMsg = lastError.message;
+  }
+
+  throw new Error(errorMsg);
 }
 
 export async function logoutAdmin(): Promise<void> {
@@ -188,5 +194,7 @@ export async function logoutAdmin(): Promise<void> {
 
   currentAdminUser = null;
   sessionStorage.removeItem(ADMIN_AUTH_KEY);
+  sessionStorage.removeItem(ADMIN_USER_KEY);
+  localStorage.removeItem(ADMIN_USER_KEY);
   notifyListeners();
 }
