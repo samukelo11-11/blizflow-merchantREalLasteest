@@ -21,10 +21,17 @@ export interface ShopProfile {
   logoUrl?: string;
   coverUrl?: string;
   description?: string;
+  timeOfOperation?: string;
   openingHours?: {
     open: string;
     close: string;
+    days?: string;
+    isOpen24Hours?: boolean;
   };
+  whatsappNumber?: string;
+  landmark?: string;
+  offersDelivery?: boolean;
+  acceptedPaymentMethods?: string[];
   gpsLocation?: {
     latitude: number;
     longitude: number;

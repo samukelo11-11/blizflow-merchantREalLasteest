@@ -3,14 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { ShopRecord } from '../auth/shopAuth';
 import { ShopProfile } from '../types';
 import { BUSINESS_CATEGORIES } from '../data';
 import {
   ArrowLeft, Save, Store, Clock, ShieldCheck, Bell,
   HelpCircle, FileText, Lock, Info, LogOut, ChevronRight,
-  Upload, X, Loader2, CheckCircle, AlertCircle, User
+  Upload, X, Loader2, CheckCircle, AlertCircle, User,
+  Phone, MapPin, CreditCard, Truck, Calendar, Zap, Receipt
 } from 'lucide-react';
 
 interface SettingsPageProps {
@@ -40,17 +41,36 @@ export default function SettingsPage({
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Business profile fields
-  const [name, setName]               = useState(shop.name);
-  const [ownerName, setOwnerName]     = useState(shop.ownerName);
-  const [phoneNumber, setPhoneNumber] = useState(shop.phoneNumber);
-  const [address, setAddress]         = useState(shop.address || '');
-  const [category, setCategory]       = useState(shop.category || '');
-  const [isSavingInfo, setIsSavingInfo] = useState(false);
+  const [name, setName]                             = useState(shop.name || '');
+  const [ownerName, setOwnerName]                   = useState(shop.ownerName || '');
+  const [phoneNumber, setPhoneNumber]               = useState(shop.phoneNumber || '');
+  const [address, setAddress]                       = useState(shop.address || '');
+  const [category, setCategory]                     = useState(shop.category || '');
+  const [description, setDescription]               = useState(shop.description || '');
+  const [landmark, setLandmark]                     = useState(shop.landmark || '');
+  const [whatsappNumber, setWhatsappNumber]         = useState(shop.whatsappNumber || shop.phoneNumber || '');
+  const [offersDelivery, setOffersDelivery]         = useState(!!shop.offersDelivery);
+  const [acceptedPaymentMethods, setAcceptedPaymentMethods] = useState<string[]>(
+    shop.acceptedPaymentMethods && shop.acceptedPaymentMethods.length > 0
+      ? shop.acceptedPaymentMethods
+      : ['cash', 'card']
+  );
+  const [isSavingInfo, setIsSavingInfo]             = useState(false);
 
   // Hours
-  const [openTime, setOpenTime]   = useState('08:00');
-  const [closeTime, setCloseTime] = useState('18:00');
-  const [isSavingHours, setIsSavingHours] = useState(false);
+  const [openTime, setOpenTime]                     = useState(shop.openingHours?.open || '07:00');
+  const [closeTime, setCloseTime]                   = useState(shop.openingHours?.close || '20:00');
+  const [operatingDays, setOperatingDays]           = useState(shop.openingHours?.days || 'Monday – Sunday (7 Days)');
+  const [isOpen24Hours, setIsOpen24Hours]           = useState(!!shop.openingHours?.isOpen24Hours);
+  const [isSavingHours, setIsSavingHours]           = useState(false);
+
+  const togglePaymentMethod = (methodId: string) => {
+    setAcceptedPaymentMethods(prev =>
+      prev.includes(methodId)
+        ? (prev.length > 1 ? prev.filter(m => m !== methodId) : prev)
+        : [...prev, methodId]
+    );
+  };
 
   // Notification preferences
   const [notifyLowStock, setNotifyLowStock] = useState(() =>
@@ -83,13 +103,18 @@ export default function SettingsPage({
     setIsSavingInfo(true);
     try {
       await onUpdateShop({
-        name:        name.trim(),
-        ownerName:   ownerName.trim(),
-        phoneNumber: phoneNumber.trim(),
-        address:     address.trim(),
-        category:    category.trim(),
+        name:              name.trim(),
+        ownerName:         ownerName.trim(),
+        phoneNumber:       phoneNumber.trim(),
+        address:           address.trim(),
+        category:          category.trim(),
+        description:       description.trim(),
+        landmark:          landmark.trim(),
+        whatsappNumber:    whatsappNumber.trim(),
+        offersDelivery,
+        acceptedPaymentMethods,
       });
-      setNotification({ type: 'success', message: 'Business profile saved successfully.' });
+      setNotification({ type: 'success', message: 'Business profile and receipt details saved.' });
     } catch (err) {
       setNotification({ type: 'error', message: 'Failed to save. Please check your connection.' });
     } finally {
@@ -101,9 +126,21 @@ export default function SettingsPage({
     e.preventDefault();
     setNotification(null);
     setIsSavingHours(true);
+    const timeOfOperationStr = isOpen24Hours
+      ? 'Open 24/7'
+      : `${operatingDays}: ${openTime} - ${closeTime}`;
+
     try {
-      await onUpdateShop({ openingHours: { open: openTime, close: closeTime } } as any);
-      setNotification({ type: 'success', message: 'Business hours saved successfully.' });
+      await onUpdateShop({
+        openingHours: {
+          open: openTime,
+          close: closeTime,
+          days: operatingDays,
+          isOpen24Hours
+        },
+        timeOfOperation: timeOfOperationStr
+      });
+      setNotification({ type: 'success', message: 'Trading hours & operational schedule saved.' });
     } catch (err) {
       setNotification({ type: 'error', message: 'Failed to save hours. Please check your connection.' });
     } finally {
@@ -197,49 +234,144 @@ export default function SettingsPage({
 
             {/* BUSINESS PROFILE */}
             {activeTab === 'info' && (
-              <form onSubmit={handleSaveInfo} className="space-y-5">
-                <h3 className="text-sm font-black text-slate-950 uppercase tracking-wider pb-3 border-b border-slate-100 flex items-center gap-2">
-                  <Store className="w-4 h-4 text-indigo-600" /> Business Profile
-                </h3>
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Business Name *</label>
-                    <input type="text" value={name} onChange={e => setName(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-indigo-600 focus:bg-white transition" />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Owner Name *</label>
-                    <input type="text" value={ownerName} onChange={e => setOwnerName(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-indigo-600 focus:bg-white transition" />
-                  </div>
-                </div>
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Phone Number *</label>
-                    <input type="text" value={phoneNumber} onChange={e => setPhoneNumber(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-indigo-600 focus:bg-white transition" />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Category</label>
-                    <select value={category} onChange={e => setCategory(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-indigo-600 focus:bg-white transition text-slate-700">
-                      {BUSINESS_CATEGORIES.map(cat => (
-                        <option key={cat.id} value={cat.id}>{cat.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
+              <form onSubmit={handleSaveInfo} className="space-y-6">
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Address</label>
-                  <input type="text" value={address} onChange={e => setAddress(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-indigo-600 focus:bg-white transition" />
+                  <h3 className="text-sm font-black text-slate-950 uppercase tracking-wider pb-3 border-b border-slate-100 flex items-center gap-2">
+                    <Store className="w-4 h-4 text-indigo-600" /> Business Profile & Store Identity
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Manage your business details, customer-facing receipt notes, and local delivery settings.
+                  </p>
                 </div>
-                <div className="pt-2 flex justify-end">
+
+                {/* Section 1: Core Details */}
+                <div className="space-y-3">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">
+                    Core Business Info
+                  </span>
+                  <div className="grid sm:grid-cols-2 gap-3.5">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Business Name *</label>
+                      <input type="text" value={name} onChange={e => setName(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs outline-none focus:border-indigo-600 focus:bg-white transition" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Owner Name *</label>
+                      <input type="text" value={ownerName} onChange={e => setOwnerName(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs outline-none focus:border-indigo-600 focus:bg-white transition" />
+                    </div>
+                  </div>
+                  <div className="grid sm:grid-cols-2 gap-3.5">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Owner Phone *</label>
+                      <input type="text" value={phoneNumber} onChange={e => setPhoneNumber(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs outline-none focus:border-indigo-600 focus:bg-white transition" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Category</label>
+                      <select value={category} onChange={e => setCategory(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs outline-none focus:border-indigo-600 focus:bg-white transition text-slate-700">
+                        {BUSINESS_CATEGORIES.map(cat => (
+                          <option key={cat.id} value={cat.id}>{cat.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Section 2: Location & Directions */}
+                <div className="space-y-3 pt-2 border-t border-slate-100">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">
+                    Location & Directions
+                  </span>
+                  <div className="grid sm:grid-cols-2 gap-3.5">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Physical Address / Town</label>
+                      <input type="text" value={address} onChange={e => setAddress(e.target.value)}
+                        placeholder="e.g. 14 Vilakazi St, Orlando West"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs outline-none focus:border-indigo-600 focus:bg-white transition" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Nearby Landmark / Directions</label>
+                      <input type="text" value={landmark} onChange={e => setLandmark(e.target.value)}
+                        placeholder="e.g. Opposite Total Garage, near Taxi Rank"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs outline-none focus:border-indigo-600 focus:bg-white transition" />
+                    </div>
+                  </div>
+                  <label className="flex items-center gap-2 p-3 bg-slate-50 border border-slate-200 rounded-xl cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={offersDelivery}
+                      onChange={e => setOffersDelivery(e.target.checked)}
+                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <div className="text-xs">
+                      <span className="font-bold text-slate-900 block">Offer Local Township Delivery & Call-and-Collect</span>
+                      <span className="text-[10px] text-slate-500">Notifies customers on printed slips that you can deliver or pack orders in advance.</span>
+                    </div>
+                  </label>
+                </div>
+
+                {/* Section 3: Receipt Notes & WhatsApp Communication */}
+                <div className="space-y-3 pt-2 border-t border-slate-100">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">
+                    Customer Receipts & Communication
+                  </span>
+                  <div className="grid sm:grid-cols-2 gap-3.5">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Dedicated WhatsApp Order Line</label>
+                      <input type="text" value={whatsappNumber} onChange={e => setWhatsappNumber(e.target.value)}
+                        placeholder="e.g. 082 123 4567"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs outline-none focus:border-indigo-600 focus:bg-white transition" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Store Slogan or Tagline</label>
+                      <input type="text" value={description} onChange={e => setDescription(e.target.value)}
+                        placeholder="e.g. Best butchery specials & fresh bread daily"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs outline-none focus:border-indigo-600 focus:bg-white transition" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Section 4: Payment Methods Accepted */}
+                <div className="space-y-2 pt-2 border-t border-slate-100">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">
+                    Payment Methods Accepted
+                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      { id: 'cash', label: 'Cash (ZAR)' },
+                      { id: 'card', label: 'Card Swipe / Tap' },
+                      { id: 'capitec_pay', label: 'Capitec Pay' },
+                      { id: 'snapscan', label: 'SnapScan / Zapper QR' },
+                      { id: 'ewallet', label: 'eWallet / Mukuru' }
+                    ].map(m => {
+                      const isChecked = acceptedPaymentMethods.includes(m.id);
+                      return (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => togglePaymentMethod(m.id)}
+                          className={`text-xs font-bold px-3 py-1.5 rounded-xl border transition cursor-pointer flex items-center gap-1.5 ${
+                            isChecked
+                              ? 'bg-indigo-50 border-indigo-300 text-indigo-700'
+                              : 'bg-slate-50 border-slate-200 text-slate-500 hover:border-slate-300'
+                          }`}
+                        >
+                          {isChecked && <CheckCircle className="w-3.5 h-3.5 text-indigo-600" />}
+                          <span>{m.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="pt-3 flex justify-end">
                   <button type="submit" disabled={isSavingInfo}
-                    className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs px-5 py-3 rounded-xl transition cursor-pointer flex items-center gap-1.5">
+                    className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs px-6 py-3 rounded-xl transition cursor-pointer flex items-center gap-1.5 shadow-md shadow-indigo-600/20">
                     {isSavingInfo
                       ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving...</>
-                      : <><Save className="w-4 h-4" /> Save Profile</>}
+                      : <><Save className="w-4 h-4" /> Save Business Profile</>}
                   </button>
                 </div>
               </form>
@@ -248,28 +380,87 @@ export default function SettingsPage({
             {/* BUSINESS HOURS */}
             {activeTab === 'hours' && (
               <form onSubmit={handleSaveHours} className="space-y-5">
-                <h3 className="text-sm font-black text-slate-950 uppercase tracking-wider pb-3 border-b border-slate-100 flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-indigo-600" /> Business Hours
-                </h3>
-                <p className="text-xs text-slate-500">Set your standard daily trading hours.</p>
-                <div className="grid grid-cols-2 gap-4 max-w-sm">
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Opening Time</label>
-                    <input type="time" value={openTime} onChange={e => setOpenTime(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-indigo-600 focus:bg-white transition font-mono font-bold" />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Closing Time</label>
-                    <input type="time" value={closeTime} onChange={e => setCloseTime(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-indigo-600 focus:bg-white transition font-mono font-bold" />
-                  </div>
+                <div>
+                  <h3 className="text-sm font-black text-slate-950 uppercase tracking-wider pb-3 border-b border-slate-100 flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-indigo-600" /> Business Hours & Trading Schedule
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-1">Set your standard operational schedule and open times.</p>
                 </div>
+
+                {/* Days of Operation */}
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                    Trading Days
+                  </label>
+                  <select
+                    value={operatingDays}
+                    onChange={e => setOperatingDays(e.target.value)}
+                    disabled={isOpen24Hours}
+                    className="w-full max-w-sm bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs outline-none focus:border-indigo-600 focus:bg-white transition text-slate-700 disabled:opacity-50"
+                  >
+                    <option>Monday – Sunday (7 Days)</option>
+                    <option>Monday – Saturday</option>
+                    <option>Monday – Friday</option>
+                    <option>Tuesday – Sunday</option>
+                    <option>Weekends & Public Holidays</option>
+                  </select>
+                </div>
+
+                {/* 24/7 Option */}
+                <label className="flex items-center gap-2 p-3 bg-slate-50 border border-slate-200 rounded-xl max-w-sm cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={isOpen24Hours}
+                    onChange={e => setIsOpen24Hours(e.target.checked)}
+                    className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <div className="text-xs">
+                    <span className="font-bold text-slate-900 block">Open 24/7 (All Day & Night)</span>
+                    <span className="text-[10px] text-slate-500">Trading around the clock, 7 days a week.</span>
+                  </div>
+                </label>
+
+                {!isOpen24Hours && (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 gap-4 max-w-sm">
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Opening Time</label>
+                        <input type="time" value={openTime} onChange={e => setOpenTime(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-indigo-600 focus:bg-white transition font-mono font-bold" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Closing Time</label>
+                        <input type="time" value={closeTime} onChange={e => setCloseTime(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-indigo-600 focus:bg-white transition font-mono font-bold" />
+                      </div>
+                    </div>
+
+                    {/* Presets */}
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      {[
+                        { label: '06:00 - 20:00', open: '06:00', close: '20:00' },
+                        { label: '07:00 - 21:00', open: '07:00', close: '21:00' },
+                        { label: '08:00 - 18:00', open: '08:00', close: '18:00' }
+                      ].map(preset => (
+                        <button
+                          key={preset.label}
+                          type="button"
+                          onClick={() => { setOpenTime(preset.open); setCloseTime(preset.close); }}
+                          className="text-[11px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1 rounded-lg transition cursor-pointer"
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="pt-2 flex justify-end">
                   <button type="submit" disabled={isSavingHours}
-                    className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs px-5 py-3 rounded-xl transition cursor-pointer flex items-center gap-1.5">
+                    className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs px-5 py-3 rounded-xl transition cursor-pointer flex items-center gap-1.5 shadow-md shadow-indigo-600/20">
                     {isSavingHours
                       ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving...</>
-                      : <><Save className="w-4 h-4" /> Save Hours</>}
+                      : <><Save className="w-4 h-4" /> Save Trading Hours</>}
                   </button>
                 </div>
               </form>

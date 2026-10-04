@@ -11,6 +11,7 @@ import {
   updateShopStatus,
   resetShopPin,
   normalizeShopRecord,
+  checkShopIdAvailability,
   ShopRecord,
 } from '../auth/shopAuth';
 import { adminDeleteShop, adminUpdateShopDetails, adminFetchAllShops } from '../services/shopAuth';
@@ -217,6 +218,14 @@ export default function AdminPanel({
     if (!/^\d{4,16}$/.test(newPin.trim())) { setFormError('PIN must be 4–16 digits.'); return; }
 
     setFormLoading(true);
+    // Verify Shop ID availability
+    const check = await checkShopIdAvailability(cleanId);
+    if (!check.available) {
+      setFormLoading(false);
+      setFormError(check.message || `Shop ID "${cleanId}" is already registered.`);
+      return;
+    }
+
     const result = await createShop({
       shopId:      cleanId,
       name:        newName.trim(),

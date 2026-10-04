@@ -558,6 +558,9 @@ export default function App() {
 
   const handleUpdateShop = useCallback(async (updated: ShopProfile) => {
     setShop(updated);
+    try {
+      localStorage.setItem('blizflow_shop', JSON.stringify(updated));
+    } catch {}
     try { await setDoc(doc(db, 'merchants', updated.id), updated, { merge: true }); }
     catch (e) { console.error('[App] Failed to update merchant profile:', e); }
   }, []);

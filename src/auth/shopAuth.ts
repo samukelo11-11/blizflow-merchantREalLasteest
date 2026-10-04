@@ -16,7 +16,7 @@ import {
 } from '../services/shopAuth';
 import { ShopProfile } from '../types';
 import { db } from '../services/firebaseConfig';
-import { doc, setDoc } from 'firebase/firestore';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
 
 export interface ShopRecord {
   id: string;
@@ -76,6 +76,43 @@ export function normalizeShopRecord(raw: any): ShopRecord {
 }
 
 /**
+ * Checks if a Shop ID is valid and available (not already in use)
+ */
+export async function checkShopIdAvailability(shopId: string): Promise<{
+  valid: boolean;
+  available: boolean;
+  message?: string;
+}> {
+  const cleanId = (shopId || '').replace(/[^A-Za-z0-9_-]/g, '').trim().toUpperCase();
+  if (!cleanId || cleanId.length < 3) {
+    return { valid: false, available: false, message: 'Shop ID must be at least 3 alphanumeric characters.' };
+  }
+
+  try {
+    const snap = await getDoc(doc(db, 'merchants', cleanId));
+    if (snap.exists()) {
+      return {
+        valid: true,
+        available: false,
+        message: `Shop ID "${cleanId}" is already registered. If this is your business, please switch to Unlock Shop.`
+      };
+    }
+    return {
+      valid: true,
+      available: true,
+      message: `Shop ID "${cleanId}" is available!`
+    };
+  } catch (err: any) {
+    console.warn('[shopAuth] checkShopIdAvailability note:', err.message);
+    return {
+      valid: true,
+      available: true,
+      message: `Shop ID "${cleanId}" format verified.`
+    };
+  }
+}
+
+/**
  * Creates a new shop record via Firestore and syncs with backend if reachable
  */
 export async function createShop(params: CreateShopParams): Promise<ShopOperationResult> {
@@ -97,7 +134,7 @@ export async function createShop(params: CreateShopParams): Promise<ShopOperatio
       category: params.category || 'Grocery & Spaza Shop',
       address: params.address?.trim() || '',
       pin: params.pin.trim(),
-      status: params.status || 'pending',
+      status: params.status || 'active',
       plan: params.plan || 'starter',
       createdAt: new Date().toISOString()
     };
@@ -117,7 +154,7 @@ export async function createShop(params: CreateShopParams): Promise<ShopOperatio
         category: params.category || 'Grocery & Spaza Shop',
         address: params.address?.trim() || '',
         pin: params.pin.trim(),
-        status: params.status || 'pending'
+        status: params.status || 'active'
       });
       if (params.plan && params.plan !== 'starter') {
         try {
@@ -128,9 +165,14 @@ export async function createShop(params: CreateShopParams): Promise<ShopOperatio
       console.warn('[shopAuth] Backend create sync note (static/Netlify mode):', apiErr.message);
     }
 
+    const normalized = normalizeShopRecord(backendCreated || shopPayload);
+    try {
+      localStorage.setItem('blizflow_shop', JSON.stringify(normalized));
+    } catch {}
+
     return {
       success: true,
-      shop: normalizeShopRecord(backendCreated || shopPayload)
+      shop: normalized
     };
   } catch (err: any) {
     console.error('[shopAuth] createShop error:', err);

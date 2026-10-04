@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Product } from '../types';
+import { Product, ShopProfile } from '../types';
 import { 
   Search, 
   ShoppingCart, 
@@ -89,19 +89,16 @@ export default function POS({
   const [cashTenderedInput, setCashTenderedInput] = useState<string>('');
   const [lastReceipt, setLastReceipt] = useState<ReceiptData | null>(null);
 
-  // Shop Name from localStorage
-  const shopName = useMemo(() => {
+  // Shop Profile & Name from localStorage
+  const shopProfile = useMemo<ShopProfile | null>(() => {
     try {
       const saved = localStorage.getItem('blizflow_shop');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        return parsed.name || 'Spaza Store';
-      }
-    } catch (e) {
-      // fallback
-    }
-    return 'Spaza Store';
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return null;
   }, []);
+
+  const shopName = shopProfile?.name || 'Spaza Store';
 
   // Favourites state synced with localStorage
   const [starredProductIds, setStarredProductIds] = useState<string[]>(() => {
@@ -426,6 +423,7 @@ export default function POS({
       ] : []),
       `--------------------------------`,
       `Thank you for your business! 🙏`,
+      ...(shopProfile?.whatsappNumber ? [`*Store Orders & Inquiries:* ${shopProfile.whatsappNumber}`] : []),
       `_Powered by BlizFlow POS_`
     ];
     const receiptText = lines.join('\n');
@@ -1218,7 +1216,9 @@ export default function POS({
               
               <div className="text-center border-b border-dashed border-slate-300 pb-3 space-y-1">
                 <h3 className="font-black text-base text-slate-950 uppercase tracking-tight">{shopName}</h3>
-                <p className="text-[10px] text-slate-500">Official Retail Receipt</p>
+                {shopProfile?.address && <p className="text-[9px] text-slate-500">{shopProfile.address}</p>}
+                {shopProfile?.landmark && <p className="text-[9px] text-slate-400">Near: {shopProfile.landmark}</p>}
+                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Official Retail Receipt</p>
                 <p className="text-[10px] font-bold text-slate-700">{lastReceipt.receiptNo}</p>
                 <p className="text-[9px] text-slate-400">{lastReceipt.date} • {lastReceipt.time}</p>
               </div>
@@ -1276,9 +1276,21 @@ export default function POS({
                 )}
               </div>
 
-              <div className="text-center pt-2 text-[9px] text-slate-400 font-sans">
-                <p className="font-bold text-slate-600">Thank you for your business!</p>
-                <p>Powered by Blizflow POS</p>
+              <div className="text-center pt-2 text-[9px] text-slate-500 font-sans space-y-1 border-t border-dashed border-slate-300">
+                <p className="font-bold text-slate-800 text-[10px] leading-tight">
+                  Thank you for your business!
+                </p>
+                {shopProfile?.whatsappNumber && (
+                  <p className="text-[9px] text-slate-600 font-medium">
+                    WhatsApp Orders: {shopProfile.whatsappNumber}
+                  </p>
+                )}
+                {shopProfile?.offersDelivery && (
+                  <p className="text-[8px] text-emerald-700 font-bold uppercase tracking-wider">
+                    Local Township Delivery & Pickup Available
+                  </p>
+                )}
+                <p className="text-[8px] text-slate-400">Powered by BlizFlow POS</p>
               </div>
 
             </div>
