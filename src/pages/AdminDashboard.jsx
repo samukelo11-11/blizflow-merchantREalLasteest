@@ -1,12 +1,12 @@
 import React from 'react';
 import AdminPanel from '../components/AdminPanel';
 
-export default function AdminDashboard({ merchants, onUpdateMerchant }) {
+export default function AdminDashboard({ merchants, onUpdateMerchant, defaultSection = 'overview' }) {
   return (
     <AdminPanel 
       merchants={merchants} 
       onUpdateMerchant={onUpdateMerchant} 
-      defaultSection="overview"
+      defaultSection={defaultSection}
       defaultTab="all"
     />
   );

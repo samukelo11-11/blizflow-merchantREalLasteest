@@ -22,6 +22,51 @@ app.use(authenticateUser);
 app.use("/api/auth", authRoutes);
 app.use("/api/shop", shopRoutes);
 
+// In-memory / server-authoritative system broadcast state
+let currentSystemBroadcast: any = {
+  id: 'current',
+  title: '',
+  message: '',
+  type: 'info',
+  active: false,
+  author: 'BlizFlow System Operations',
+  updatedAt: new Date().toISOString(),
+  persistent: false,
+};
+
+app.get('/api/broadcast', (req, res) => {
+  res.json({ success: true, broadcast: currentSystemBroadcast.active ? currentSystemBroadcast : null });
+});
+
+app.post('/api/broadcast', (req, res) => {
+  const { title, message, type, active, author, persistent } = req.body || {};
+  currentSystemBroadcast = {
+    id: 'current',
+    title: (title || '').trim(),
+    message: (message || '').trim(),
+    type: type || 'info',
+    active: active !== undefined ? !!active : true,
+    author: (author || 'BlizFlow System Operations').trim(),
+    updatedAt: new Date().toISOString(),
+    persistent: !!persistent,
+  };
+  res.json({ success: true, broadcast: currentSystemBroadcast });
+});
+
+app.delete('/api/broadcast', (req, res) => {
+  currentSystemBroadcast = {
+    id: 'current',
+    title: '',
+    message: '',
+    type: 'info',
+    active: false,
+    author: 'BlizFlow System Operations',
+    updatedAt: new Date().toISOString(),
+    persistent: false,
+  };
+  res.json({ success: true, message: 'Broadcast cleared.' });
+});
+
 let ai: GoogleGenAI | null = null;
 function getAI() {
   if (!ai) {

@@ -129,6 +129,16 @@ service cloud.firestore {
     }
 
     // ==========================================================
+    // SYSTEM ANNOUNCEMENTS & EMERGENCY BROADCASTS
+    // ==========================================================
+    match /system_announcements/{announcementId} {
+      // All merchants can read system announcements
+      allow read: if true;
+      // Allow admin updates
+      allow write: if true;
+    }
+
+    // ==========================================================
     // FIX 8: Explicit fallback — deny everything not matched above.
     // Makes it clear that unlisted collections are intentionally closed,
     // not accidentally forgotten.

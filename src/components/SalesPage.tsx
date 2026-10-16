@@ -5,7 +5,8 @@
 
 import React, { useState } from 'react';
 import { Transaction } from '../types';
-import { Search, Calendar, ChevronRight, Receipt, CreditCard, DollarSign, RefreshCw, ShoppingCart, Info, ArrowLeft, Layers } from 'lucide-react';
+import { Search, Calendar, ChevronRight, Receipt, CreditCard, DollarSign, RefreshCw, ShoppingCart, Info, ArrowLeft, Layers, Download, CheckCircle } from 'lucide-react';
+import { exportTransactionsToCSV } from '../utils/csvExport';
 
 interface SalesPageProps {
   transactions: Transaction[];
@@ -16,6 +17,17 @@ export default function SalesPage({ transactions = [], onBackToDashboard }: Sale
   const [searchQuery, setSearchQuery] = useState('');
   const [filterPayment, setFilterPayment] = useState<string>('all');
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
+  const [exportNotice, setExportNotice] = useState<string | null>(null);
+
+  const handleExportCSV = () => {
+    try {
+      const res = exportTransactionsToCSV(filteredTransactions);
+      setExportNotice(`Exported ${res.count} sales records to ${res.filename}`);
+      setTimeout(() => setExportNotice(null), 3500);
+    } catch (err: any) {
+      alert(err.message || 'No sales transactions to export.');
+    }
+  };
 
   // Sorting transactions: latest first
   const sortedTransactions = [...transactions].sort(
@@ -62,10 +74,29 @@ export default function SalesPage({ transactions = [], onBackToDashboard }: Sale
               <h1 className="text-xl sm:text-2xl font-black text-slate-950 tracking-tight">Sales Records</h1>
             </div>
           </div>
-          <span className="bg-indigo-50 text-indigo-700 text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider border border-indigo-100/50">
-            Total Bills: {totalTxCount}
-          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleExportCSV}
+              disabled={filteredTransactions.length === 0}
+              className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200/80 font-bold text-xs px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Export sales transactions to CSV spreadsheet"
+            >
+              <Download className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Export CSV</span>
+            </button>
+            <span className="bg-indigo-50 text-indigo-700 text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider border border-indigo-100/50">
+              Total Bills: {totalTxCount}
+            </span>
+          </div>
         </div>
+
+        {/* Export Notification Toast */}
+        {exportNotice && (
+          <div className="mb-4 bg-emerald-50 border border-emerald-200 text-emerald-800 px-4 py-2.5 rounded-xl text-xs flex items-center gap-2 shadow-xs animate-fadeIn">
+            <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span className="font-semibold">{exportNotice}</span>
+          </div>
+        )}
 
         {/* Detailed Sales Statistics Dashboard Section */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">

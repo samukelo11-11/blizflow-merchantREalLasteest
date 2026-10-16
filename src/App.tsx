@@ -29,6 +29,7 @@ import AdminRouteGuard from './components/AdminRouteGuard';
 import AdminLogin from './pages/AdminLogin';
 import MerchantManagement from './pages/MerchantManagement';
 import SubscriptionManagement from './pages/SubscriptionManagement';
+import BroadcastBanner from './components/BroadcastBanner';
 import {
   Zap, LogOut, CheckCircle, ArrowRight, ShoppingCart, Menu, X,
   Home, Package, Receipt, TrendingDown, Settings, ShieldCheck
@@ -308,6 +309,9 @@ const MerchantPortal: React.FC<MerchantPortalProps> = ({
           </div>
         )}
       </header>
+
+      {/* Real-Time System Announcement / Broadcast Banner */}
+      <BroadcastBanner />
 
       {/* Main View Router */}
       <div className="flex-1 flex flex-col">
@@ -681,6 +685,7 @@ export default function App() {
         <Route path="/admin/dashboard" element={<AdminRouteGuard><AdminDashboard merchants={allMerchants} onUpdateMerchant={handleAdminUpdateMerchant} /></AdminRouteGuard>} />
         <Route path="/admin/merchants" element={<AdminRouteGuard><MerchantManagement merchants={allMerchants} onUpdateMerchant={handleAdminUpdateMerchant} /></AdminRouteGuard>} />
         <Route path="/admin/subscriptions" element={<AdminRouteGuard><SubscriptionManagement merchants={allMerchants} onUpdateMerchant={handleAdminUpdateMerchant} /></AdminRouteGuard>} />
+        <Route path="/admin/broadcasts" element={<AdminRouteGuard><AdminDashboard merchants={allMerchants} onUpdateMerchant={handleAdminUpdateMerchant} defaultSection="broadcasts" /></AdminRouteGuard>} />
         <Route path="/*" element={
           <MerchantPortal
             appAuthState={appAuthState}

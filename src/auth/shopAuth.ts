@@ -24,12 +24,16 @@ export interface ShopRecord {
   name: string;
   ownerName: string;
   phoneNumber?: string;
+  whatsappNumber?: string;
   email?: string;
   category?: string;
   address?: string;
+  landmark?: string;
+  offersDelivery?: boolean;
   status: 'active' | 'pending' | 'suspended';
   plan?: 'starter' | 'growth' | 'pro';
   subscriptionStatus?: string;
+  nextRenewalDate?: string;
   createdAt: string;
   activatedAt?: string;
   updatedAt?: string;

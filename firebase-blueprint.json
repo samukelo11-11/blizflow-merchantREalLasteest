@@ -169,6 +169,23 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "category", "amount", "date", "createdAt"]
+    },
+
+    "SystemAnnouncement": {
+      "title": "SystemAnnouncement",
+      "description": "Platform-wide broadcast announcement sent by administrators to all merchants",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "type": { "type": "string", "enum": ["info", "warning", "urgent"] },
+        "active": { "type": "boolean" },
+        "author": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "persistent": { "type": "boolean" }
+      },
+      "required": ["id", "title", "message", "type", "active", "updatedAt"]
     }
   },
 
@@ -192,6 +209,10 @@
     "/merchants/{merchantId}/expenses/{expenseId}": {
       "schema": "Expense",
       "description": "Merchant-scoped operational costs"
+    },
+    "/system_announcements/{announcementId}": {
+      "schema": "SystemAnnouncement",
+      "description": "Global announcements and emergency broadcasts visible to all merchants"
     }
   }
 }

@@ -143,3 +143,14 @@ export interface PresetAsset {
   url: string;
   category: string;
 }
+
+export interface SystemBroadcast {
+  id: string;
+  title: string;
+  message: string;
+  type: 'info' | 'warning' | 'urgent';
+  active: boolean;
+  author?: string;
+  updatedAt: string;
+  persistent?: boolean;
+}

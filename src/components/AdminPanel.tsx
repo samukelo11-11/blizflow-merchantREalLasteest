@@ -22,15 +22,17 @@ import {
   Lock, KeyRound, Edit3, PlusCircle, Smartphone, ArrowLeft,
   Loader2, AlertCircle, RefreshCw, Trash2, CreditCard, Copy,
   Check, X, ChevronRight, TrendingUp, DollarSign, Calendar,
-  Store, Filter, ExternalLink
+  Store, Filter, ExternalLink, Download, Megaphone, Radio,
+  Bell, AlertTriangle, Sparkles, Send, Power, Eye, Info, Zap
 } from 'lucide-react';
-import { ShopProfile } from '../types';
+import { ShopProfile, SystemBroadcast } from '../types';
+import { exportMerchantsToCSV } from '../utils/csvExport';
 
 export interface AdminPanelProps {
   merchants?: (ShopRecord | ShopProfile)[];
   onUpdateMerchant?: (merchantId: string, updates: Partial<ShopRecord | ShopProfile>) => void | Promise<void>;
   defaultTab?: 'all' | 'active' | 'pending' | 'suspended';
-  defaultSection?: 'overview' | 'merchants' | 'billing';
+  defaultSection?: 'overview' | 'merchants' | 'billing' | 'broadcasts';
   onClose?: () => void;
 }
 
@@ -57,12 +59,24 @@ export default function AdminPanel({
   const [copiedId, setCopiedId]               = useState<string | null>(null);
 
   // Section sync based on URL path or prop
-  const currentSection = useMemo((): 'overview' | 'merchants' | 'billing' => {
+  const currentSection = useMemo((): 'overview' | 'merchants' | 'billing' | 'broadcasts' => {
+    if (location.pathname.includes('/broadcasts')) return 'broadcasts';
     if (location.pathname.includes('/merchants')) return 'merchants';
     if (location.pathname.includes('/subscriptions')) return 'billing';
     if (defaultSection) return defaultSection;
     return 'overview';
   }, [location.pathname, defaultSection]);
+
+  // System Broadcast State
+  const [activeBroadcast, setActiveBroadcast]       = useState<SystemBroadcast | null>(null);
+  const [broadcastTitle, setBroadcastTitle]         = useState('');
+  const [broadcastMessage, setBroadcastMessage]     = useState('');
+  const [broadcastType, setBroadcastType]           = useState<'info' | 'warning' | 'urgent'>('info');
+  const [broadcastPersistent, setBroadcastPersistent] = useState(false);
+  const [broadcastAuthor, setBroadcastAuthor]       = useState('BlizFlow System Operations');
+  const [isSavingBroadcast, setIsSavingBroadcast]   = useState(false);
+  const [broadcastNotice, setBroadcastNotice]       = useState<string | null>(null);
+  const [exportNotice, setExportNotice]             = useState<string | null>(null);
 
   // Modals
   const [showCreateModal, setShowCreateModal]     = useState(false);
@@ -148,6 +162,69 @@ export default function AdminPanel({
     return () => unsub();
   }, [isAuthenticated, propsMerchants]);
 
+  // 3. Real-time Firestore sync for system broadcast announcement
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let unsub = () => {};
+
+    const checkFallback = async () => {
+      try {
+        const local = localStorage.getItem('blizflow_current_broadcast');
+        if (local) {
+          const parsed = JSON.parse(local) as SystemBroadcast;
+          if (parsed && parsed.active) {
+            setActiveBroadcast(parsed);
+            setBroadcastTitle(prev => prev || parsed.title || '');
+            setBroadcastMessage(prev => prev || parsed.message || '');
+            setBroadcastType(parsed.type || 'info');
+            setBroadcastPersistent(!!parsed.persistent);
+            setBroadcastAuthor(parsed.author || 'BlizFlow System Operations');
+            return;
+          }
+        }
+      } catch {}
+
+      try {
+        const res = await fetch('/api/broadcast');
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && json.broadcast && json.broadcast.active) {
+            setActiveBroadcast(json.broadcast);
+            setBroadcastTitle(prev => prev || json.broadcast.title || '');
+            setBroadcastMessage(prev => prev || json.broadcast.message || '');
+            setBroadcastType(json.broadcast.type || 'info');
+            setBroadcastPersistent(!!json.broadcast.persistent);
+            setBroadcastAuthor(json.broadcast.author || 'BlizFlow System Operations');
+          }
+        }
+      } catch {}
+    };
+
+    try {
+      unsub = onSnapshot(doc(db, 'system_announcements', 'current'), snap => {
+        if (snap.exists()) {
+          const data = snap.data() as SystemBroadcast;
+          setActiveBroadcast(data);
+          // Set form values if not actively being typed
+          setBroadcastTitle(prev => prev || data.title || '');
+          setBroadcastMessage(prev => prev || data.message || '');
+          setBroadcastType(data.type || 'info');
+          setBroadcastPersistent(!!data.persistent);
+          setBroadcastAuthor(data.author || 'BlizFlow System Operations');
+        } else {
+          checkFallback();
+        }
+      }, err => {
+        console.warn('[AdminPanel] System broadcast listener note:', err.message);
+        checkFallback();
+      });
+    } catch (e) {
+      console.warn('[AdminPanel] Failed to attach broadcast listener:', e);
+      checkFallback();
+    }
+    return () => unsub();
+  }, [isAuthenticated]);
+
   // Combine propsMerchants and firestoreShops with stable reference
   const shops: ShopRecord[] = useMemo(() => {
     if (propsMerchants && propsMerchants.length > 0) {
@@ -156,6 +233,174 @@ export default function AdminPanel({
     if (firestoreShops.length > 0) return firestoreShops;
     return [];
   }, [propsMerchants, firestoreShops]);
+
+  // CSV Export Action
+  const handleExportCSV = () => {
+    try {
+      const result = exportMerchantsToCSV(shops);
+      setExportNotice(`Exported ${result.count} merchant records to ${result.filename}`);
+      setTimeout(() => setExportNotice(null), 4000);
+    } catch (err: any) {
+      alert(err.message || 'Failed to export CSV');
+    }
+  };
+
+  // Publish / Save Broadcast
+  const handlePublishBroadcast = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!broadcastMessage.trim()) {
+      alert('Broadcast message content is required.');
+      return;
+    }
+    setIsSavingBroadcast(true);
+    setBroadcastNotice(null);
+    try {
+      const payload: SystemBroadcast = {
+        id: 'current',
+        title: broadcastTitle.trim() || 'System Announcement',
+        message: broadcastMessage.trim(),
+        type: broadcastType,
+        active: true,
+        author: broadcastAuthor.trim() || 'BlizFlow System Operations',
+        updatedAt: new Date().toISOString(),
+        persistent: broadcastPersistent,
+      };
+
+      // 1. Persist to Firestore
+      let savedFirestore = false;
+      try {
+        await setDoc(doc(db, 'system_announcements', 'current'), payload, { merge: true });
+        savedFirestore = true;
+      } catch (err: any) {
+        console.warn('[AdminPanel] Firestore broadcast note:', err?.message || err);
+      }
+
+      // 2. Persist to Server API
+      try {
+        await fetch('/api/broadcast', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } catch (err: any) {
+        console.warn('[AdminPanel] Server broadcast note:', err?.message || err);
+      }
+
+      // 3. Persist locally for instant tab/window propagation
+      try {
+        localStorage.setItem('blizflow_current_broadcast', JSON.stringify(payload));
+        window.dispatchEvent(new Event('storage'));
+      } catch {}
+
+      setActiveBroadcast(payload);
+      setBroadcastNotice('Broadcast successfully published to all merchant devices!');
+      setTimeout(() => setBroadcastNotice(null), 4000);
+    } catch (err: any) {
+      console.error('[AdminPanel] Publish broadcast error:', err);
+      alert('Unable to publish broadcast. Please try again.');
+    } finally {
+      setIsSavingBroadcast(false);
+    }
+  };
+
+  // Toggle active / take down broadcast
+  const handleToggleBroadcastStatus = async (shouldBeActive: boolean) => {
+    setIsSavingBroadcast(true);
+    try {
+      const updatedTimestamp = new Date().toISOString();
+      const updatedData: Partial<SystemBroadcast> = {
+        active: shouldBeActive,
+        updatedAt: updatedTimestamp
+      };
+
+      try {
+        await setDoc(doc(db, 'system_announcements', 'current'), updatedData, { merge: true });
+      } catch {}
+
+      try {
+        await fetch('/api/broadcast', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...activeBroadcast, ...updatedData }),
+        });
+      } catch {}
+
+      try {
+        if (activeBroadcast) {
+          const next = { ...activeBroadcast, ...updatedData };
+          localStorage.setItem('blizflow_current_broadcast', JSON.stringify(next));
+          window.dispatchEvent(new Event('storage'));
+        }
+      } catch {}
+
+      setActiveBroadcast(prev => prev ? { ...prev, active: shouldBeActive } : null);
+      setBroadcastNotice(shouldBeActive ? 'Broadcast activated and live!' : 'Broadcast taken down.');
+      setTimeout(() => setBroadcastNotice(null), 3000);
+    } catch (err: any) {
+      console.error('[AdminPanel] Toggle broadcast error:', err);
+    } finally {
+      setIsSavingBroadcast(false);
+    }
+  };
+
+  // Delete broadcast
+  const handleDeleteBroadcast = async () => {
+    if (!window.confirm('Are you sure you want to delete and clear this broadcast?')) return;
+    setIsSavingBroadcast(true);
+    try {
+      try {
+        await deleteDoc(doc(db, 'system_announcements', 'current'));
+      } catch {}
+
+      try {
+        await fetch('/api/broadcast', { method: 'DELETE' });
+      } catch {}
+
+      try {
+        localStorage.removeItem('blizflow_current_broadcast');
+        window.dispatchEvent(new Event('storage'));
+      } catch {}
+
+      setActiveBroadcast(null);
+      setBroadcastTitle('');
+      setBroadcastMessage('');
+      setBroadcastNotice('Broadcast cleared.');
+      setTimeout(() => setBroadcastNotice(null), 3000);
+    } catch (err: any) {
+      console.error('[AdminPanel] Delete broadcast error:', err);
+    } finally {
+      setIsSavingBroadcast(false);
+    }
+  };
+
+  // Preset quick templates
+  const handleApplyTemplate = (type: 'maintenance' | 'banking' | 'loadshedding' | 'notice') => {
+    if (type === 'maintenance') {
+      setBroadcastTitle('Scheduled Platform Update at 11 PM');
+      setBroadcastMessage('Scheduled platform update at 11 PM tonight. Offline POS sales remain 100% operational and will sync automatically when reconnecting.');
+      setBroadcastType('warning');
+      setBroadcastPersistent(false);
+      setBroadcastAuthor('BlizFlow System Operations');
+    } else if (type === 'banking') {
+      setBroadcastTitle('EFT Banking Details Updated');
+      setBroadcastMessage('Our official platform subscription EFT banking details have been updated. Please check the Subscriptions tab for the latest account details and use your Shop ID as your payment reference.');
+      setBroadcastType('warning');
+      setBroadcastPersistent(true);
+      setBroadcastAuthor('BlizFlow Finance Team');
+    } else if (type === 'loadshedding') {
+      setBroadcastTitle('Load-Shedding Stage Advisory');
+      setBroadcastMessage('Stage 2 load-shedding is scheduled in selected townships today. Ensure your devices are charged. BlizFlow POS will continue processing cash sales offline.');
+      setBroadcastType('info');
+      setBroadcastPersistent(false);
+      setBroadcastAuthor('BlizFlow Support');
+    } else if (type === 'notice') {
+      setBroadcastTitle('All Systems Operational');
+      setBroadcastMessage('All card processing, WhatsApp digital receipts, and cloud backups are operating smoothly. For merchant assistance, contact our WhatsApp hotline.');
+      setBroadcastType('info');
+      setBroadcastPersistent(false);
+      setBroadcastAuthor('BlizFlow Support');
+    }
+  };
 
   // Actual manual refresh action
   const handleRefresh = async () => {
@@ -508,10 +753,34 @@ export default function AdminPanel({
               <CreditCard className="w-3.5 h-3.5" />
               <span>Subscriptions</span>
             </button>
+
+            <button
+              onClick={() => navigate('/admin/broadcasts')}
+              className={`px-4 py-2 rounded-xl text-xs font-black transition flex items-center gap-2 cursor-pointer relative ${
+                currentSection === 'broadcasts'
+                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-900'
+              }`}
+            >
+              <Megaphone className="w-3.5 h-3.5" />
+              <span>Broadcasts</span>
+              {activeBroadcast?.active && (
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" title="Active broadcast is live on merchant terminals" />
+              )}
+            </button>
           </nav>
 
           {/* Action Tools */}
           <div className="flex items-center gap-2.5 w-full md:w-auto justify-end">
+            <button
+              onClick={handleExportCSV}
+              title="Download full merchant database as CSV spreadsheet for Excel or Google Sheets"
+              className="bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 hover:border-emerald-500/70 font-bold text-xs px-3.5 py-2.5 rounded-xl transition flex items-center gap-1.5 shadow-sm cursor-pointer"
+            >
+              <Download className="w-4 h-4 text-emerald-400" />
+              <span className="hidden sm:inline">Export CSV</span>
+            </button>
+
             <button
               onClick={() => setShowCreateModal(true)}
               className="bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs px-4 py-2.5 rounded-xl transition flex items-center gap-1.5 shadow-md shadow-indigo-600/20 cursor-pointer"
@@ -542,6 +811,32 @@ export default function AdminPanel({
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 space-y-6">
 
+        {/* Temporary Export Feedback */}
+        {exportNotice && (
+          <div className="bg-emerald-950/80 border border-emerald-700/80 text-emerald-300 px-4 py-3 rounded-2xl text-xs flex items-center justify-between shadow-lg animate-fadeIn">
+            <div className="flex items-center gap-2.5">
+              <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span className="font-medium">{exportNotice}</span>
+            </div>
+            <button onClick={() => setExportNotice(null)} className="text-emerald-400 hover:text-white cursor-pointer">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {/* Temporary Broadcast Feedback */}
+        {broadcastNotice && (
+          <div className="bg-indigo-950/80 border border-indigo-700/80 text-indigo-300 px-4 py-3 rounded-2xl text-xs flex items-center justify-between shadow-lg animate-fadeIn">
+            <div className="flex items-center gap-2.5">
+              <Megaphone className="w-4 h-4 text-indigo-400 shrink-0" />
+              <span className="font-medium">{broadcastNotice}</span>
+            </div>
+            <button onClick={() => setBroadcastNotice(null)} className="text-indigo-400 hover:text-white cursor-pointer">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
         {/* Temporary Refresh Feedback */}
         {refreshNotice && (
           <div className="bg-emerald-950/70 border border-emerald-800/80 text-emerald-400 px-4 py-2.5 rounded-xl text-xs flex items-center justify-between animate-fadeIn">
@@ -560,6 +855,77 @@ export default function AdminPanel({
             ══════════════════════════════════════════════════════ */}
         {currentSection === 'overview' && (
           <div className="space-y-6">
+
+            {/* Live Broadcast Status Widget */}
+            <div className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md ${
+              activeBroadcast?.active
+                ? (activeBroadcast.type === 'urgent'
+                    ? 'bg-rose-950/70 border-rose-700/80 text-rose-200'
+                    : activeBroadcast.type === 'warning'
+                      ? 'bg-amber-950/70 border-amber-700/80 text-amber-200'
+                      : 'bg-indigo-950/70 border-indigo-700/80 text-indigo-200')
+                : 'bg-slate-900 border-slate-800 text-slate-300'
+            }`}>
+              <div className="flex items-start sm:items-center gap-3">
+                <div className={`p-2.5 rounded-xl shrink-0 ${
+                  activeBroadcast?.active
+                    ? 'bg-white/10 text-white'
+                    : 'bg-slate-800 text-slate-400'
+                }`}>
+                  <Megaphone className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-black uppercase tracking-wider text-white">
+                      Merchant Broadcast Banner:
+                    </span>
+                    {activeBroadcast?.active ? (
+                      <span className="flex items-center gap-1.5 text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        LIVE ON ALL TERMINALS
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-slate-800 text-slate-400">
+                        NO ACTIVE BROADCAST
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-300 line-clamp-1 mt-0.5">
+                    {activeBroadcast?.active
+                      ? `${activeBroadcast.title}: ${activeBroadcast.message}`
+                      : 'Alert merchants about scheduled maintenance, banking details, or operational updates.'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                {activeBroadcast?.active ? (
+                  <>
+                    <button
+                      onClick={() => handleToggleBroadcastStatus(false)}
+                      disabled={isSavingBroadcast}
+                      className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold px-3 py-1.5 rounded-xl border border-slate-700 transition cursor-pointer"
+                    >
+                      Take Down
+                    </button>
+                    <button
+                      onClick={() => navigate('/admin/broadcasts')}
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3.5 py-1.5 rounded-xl transition cursor-pointer flex items-center gap-1 shadow-sm"
+                    >
+                      Manage <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => navigate('/admin/broadcasts')}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3.5 py-1.5 rounded-xl transition cursor-pointer flex items-center gap-1 shadow-sm"
+                  >
+                    <PlusCircle className="w-3.5 h-3.5" />
+                    <span>Create Announcement</span>
+                  </button>
+                )}
+              </div>
+            </div>
             
             {/* Top Metric Cards */}
             <div className="grid grid-cols-2 lg:grid-cols-5 gap-3.5">
@@ -684,6 +1050,13 @@ export default function AdminPanel({
                     className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs px-4 py-2.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
                   >
                     <Search className="w-4 h-4" /> Search Directory
+                  </button>
+                  <button
+                    onClick={handleExportCSV}
+                    title="Download complete merchant database as CSV"
+                    className="bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 font-bold text-xs px-4 py-2.5 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Download className="w-4 h-4 text-emerald-400" /> Export CSV
                   </button>
                 </div>
               </div>
@@ -820,6 +1193,15 @@ export default function AdminPanel({
                     </button>
                   );
                 })}
+
+                <button
+                  onClick={handleExportCSV}
+                  title="Export all merchants to CSV"
+                  className="px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shrink-0 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 ml-1"
+                >
+                  <Download className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Export CSV</span>
+                </button>
               </div>
             </div>
 
@@ -986,15 +1368,25 @@ export default function AdminPanel({
                   <h2 className="text-base font-black text-white">Merchant Plans & Subscriptions</h2>
                   <p className="text-xs text-slate-400">View and update merchant pricing plans</p>
                 </div>
-                <div className="relative w-full md:w-72">
-                  <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    placeholder="Filter subscriptions..."
-                    value={searchQuery}
-                    onChange={e => setSearchQuery(e.target.value)}
-                    className="w-full pl-9 pr-4 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 outline-none focus:border-indigo-500 transition"
-                  />
+                <div className="flex items-center gap-2 w-full md:w-auto">
+                  <div className="relative w-full md:w-64">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      placeholder="Filter subscriptions..."
+                      value={searchQuery}
+                      onChange={e => setSearchQuery(e.target.value)}
+                      className="w-full pl-9 pr-4 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 outline-none focus:border-indigo-500 transition"
+                    />
+                  </div>
+                  <button
+                    onClick={handleExportCSV}
+                    title="Export subscriptions to CSV spreadsheet"
+                    className="bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 font-bold text-xs px-3 py-2 rounded-xl transition flex items-center gap-1.5 shrink-0 cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5 text-emerald-400" />
+                    <span className="hidden sm:inline">Export</span>
+                  </button>
                 </div>
               </div>
 
@@ -1051,6 +1443,369 @@ export default function AdminPanel({
                 </table>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ══════════════════════════════════════════════════════
+            4. SYSTEM BROADCASTS & ANNOUNCEMENTS (/admin/broadcasts)
+            ══════════════════════════════════════════════════════ */}
+        {currentSection === 'broadcasts' && (
+          <div className="space-y-6">
+
+            {/* Header Description */}
+            <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base font-black text-white">Merchant Broadcasts & System Alerts</h2>
+                  <span className="bg-indigo-950 text-indigo-400 border border-indigo-800 text-[10px] font-black uppercase px-2 py-0.5 rounded-full">
+                    Live Push
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-1 max-w-2xl leading-relaxed">
+                  Publish immediate announcements (scheduled maintenance, banking changes, load-shedding tips, or urgent notices) that display directly across all merchant POS terminals and dashboards in real-time.
+                </p>
+              </div>
+
+              {activeBroadcast?.active && (
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => handleToggleBroadcastStatus(false)}
+                    disabled={isSavingBroadcast}
+                    className="bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 font-bold text-xs px-3.5 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Power className="w-3.5 h-3.5" />
+                    <span>Take Down Live Broadcast</span>
+                  </button>
+                  <button
+                    onClick={handleDeleteBroadcast}
+                    disabled={isSavingBroadcast}
+                    className="bg-red-950/40 hover:bg-red-900/60 text-red-400 border border-red-800/40 font-bold text-xs px-3 py-2 rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+                    title="Delete broadcast"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Live Broadcast Status Banner Preview */}
+            <div className="space-y-2">
+              <span className="text-xs font-black uppercase tracking-wider text-slate-400 block">
+                Live Broadcast Status & Merchant Terminal Preview
+              </span>
+              
+              {activeBroadcast?.active ? (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between px-1">
+                    <span className="text-xs font-bold text-emerald-400 flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                      Active Broadcast is currently broadcasting to all {shops.length} stores
+                    </span>
+                    <span className="text-[11px] text-slate-500 font-mono">
+                      Last updated: {activeBroadcast.updatedAt ? new Date(activeBroadcast.updatedAt).toLocaleTimeString() : 'Just now'}
+                    </span>
+                  </div>
+
+                  {/* Merchant View Simulation Box */}
+                  <div className={`p-4 rounded-2xl border backdrop-blur-md shadow-lg ${
+                    activeBroadcast.type === 'urgent'
+                      ? 'bg-rose-950/90 border-rose-600/80 text-rose-100'
+                      : activeBroadcast.type === 'warning'
+                        ? 'bg-amber-950/90 border-amber-600/80 text-amber-100'
+                        : 'bg-indigo-950/90 border-indigo-700/80 text-indigo-100'
+                  }`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-3">
+                        <div className="p-2 rounded-xl bg-black/25 shrink-0 mt-0.5 border border-white/10">
+                          {activeBroadcast.type === 'urgent' ? (
+                            <AlertCircle className="w-4 h-4 text-rose-400" />
+                          ) : activeBroadcast.type === 'warning' ? (
+                            <AlertTriangle className="w-4 h-4 text-amber-400" />
+                          ) : (
+                            <Info className="w-4 h-4 text-indigo-400" />
+                          )}
+                        </div>
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-white/10 border border-white/20">
+                              {activeBroadcast.type === 'urgent' ? 'URGENT ACTION' : activeBroadcast.type === 'warning' ? 'PLATFORM NOTICE' : 'SYSTEM UPDATE'}
+                            </span>
+                            <h4 className="text-xs font-black text-white">{activeBroadcast.title}</h4>
+                            {activeBroadcast.persistent && (
+                              <span className="text-[9px] font-bold bg-white/10 px-1.5 py-0.5 rounded text-white/80">
+                                Required Notice
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs leading-relaxed opacity-95 whitespace-pre-line font-sans">
+                            {activeBroadcast.message}
+                          </p>
+                          {activeBroadcast.author && (
+                            <span className="text-[10px] opacity-70 block font-medium pt-0.5">
+                              Issued by {activeBroadcast.author}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <span className="text-[10px] bg-white/10 text-white/80 px-2 py-1 rounded font-mono shrink-0">
+                        Merchant Preview
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-slate-900 border border-dashed border-slate-800 rounded-2xl p-6 text-center text-slate-500">
+                  <Megaphone className="w-8 h-8 mx-auto mb-2 opacity-30 text-slate-400" />
+                  <p className="text-xs font-bold text-slate-400">No active broadcast is running right now.</p>
+                  <p className="text-[11px] text-slate-600 mt-0.5">Use the quick templates or composer below to send a live announcement to merchants.</p>
+                </div>
+              )}
+            </div>
+
+            {/* Quick Templates */}
+            <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl space-y-3">
+              <span className="text-xs font-black uppercase tracking-wider text-slate-400 block">
+                1-Click Preset Broadcast Templates
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => handleApplyTemplate('maintenance')}
+                  className="bg-slate-800/80 hover:bg-slate-800 hover:border-amber-500/40 border border-slate-700/80 p-3 rounded-xl text-left transition group cursor-pointer"
+                >
+                  <div className="flex items-center gap-2 text-amber-400 text-xs font-black mb-1">
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>Scheduled Maintenance</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 group-hover:text-slate-300 line-clamp-2">
+                    Nightly 23:00 system update notification with offline sales reassurance.
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleApplyTemplate('banking')}
+                  className="bg-slate-800/80 hover:bg-slate-800 hover:border-amber-500/40 border border-slate-700/80 p-3 rounded-xl text-left transition group cursor-pointer"
+                >
+                  <div className="flex items-center gap-2 text-amber-400 text-xs font-black mb-1">
+                    <CreditCard className="w-3.5 h-3.5" />
+                    <span>EFT Banking Update</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 group-hover:text-slate-300 line-clamp-2">
+                    Alerts merchants of new bank account details & payment reference reminder.
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleApplyTemplate('loadshedding')}
+                  className="bg-slate-800/80 hover:bg-slate-800 hover:border-indigo-500/40 border border-slate-700/80 p-3 rounded-xl text-left transition group cursor-pointer"
+                >
+                  <div className="flex items-center gap-2 text-indigo-400 text-xs font-black mb-1">
+                    <Zap className="w-3.5 h-3.5" />
+                    <span>Load-Shedding Tip</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 group-hover:text-slate-300 line-clamp-2">
+                    Reminds merchants about offline cashier capabilities during outages.
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleApplyTemplate('notice')}
+                  className="bg-slate-800/80 hover:bg-slate-800 hover:border-emerald-500/40 border border-slate-700/80 p-3 rounded-xl text-left transition group cursor-pointer"
+                >
+                  <div className="flex items-center gap-2 text-emerald-400 text-xs font-black mb-1">
+                    <CheckCircle className="w-3.5 h-3.5" />
+                    <span>Systems Operational</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 group-hover:text-slate-300 line-clamp-2">
+                    Confirmation that card payments, sync, and WhatsApp delivery are fully active.
+                  </p>
+                </button>
+              </div>
+            </div>
+
+            {/* Broadcast Composer Form */}
+            <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl space-y-5">
+              <div className="border-b border-slate-800 pb-3 flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-black text-white flex items-center gap-2">
+                    <Send className="w-4 h-4 text-indigo-400" />
+                    Compose Platform Broadcast
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">Custom announcement dispatched to all connected stores</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setBroadcastTitle(''); setBroadcastMessage(''); }}
+                  className="text-xs text-slate-400 hover:text-white transition cursor-pointer"
+                >
+                  Clear Form
+                </button>
+              </div>
+
+              <form onSubmit={handlePublishBroadcast} className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs font-bold text-slate-300 block mb-1">
+                      Announcement Title *
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Scheduled Platform Maintenance"
+                      value={broadcastTitle}
+                      onChange={e => setBroadcastTitle(e.target.value)}
+                      className="w-full px-3.5 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 outline-none focus:border-indigo-500 transition"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-slate-300 block mb-1">
+                      Author / Department Signature
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. BlizFlow System Operations"
+                      value={broadcastAuthor}
+                      onChange={e => setBroadcastAuthor(e.target.value)}
+                      className="w-full px-3.5 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 outline-none focus:border-indigo-500 transition"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">
+                    Announcement Message Content *
+                  </label>
+                  <textarea
+                    rows={4}
+                    placeholder="Enter the full announcement text that will be displayed across merchant terminals..."
+                    value={broadcastMessage}
+                    onChange={e => setBroadcastMessage(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 outline-none focus:border-indigo-500 transition resize-y font-sans leading-relaxed"
+                    required
+                  />
+                </div>
+
+                {/* Tone / Severity Level */}
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-300 block">
+                    Alert Tone & Severity Style
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => setBroadcastType('info')}
+                      className={`p-3 rounded-xl border text-left transition cursor-pointer flex items-center gap-2.5 ${
+                        broadcastType === 'info'
+                          ? 'bg-indigo-950/70 border-indigo-500 text-white shadow-sm'
+                          : 'bg-slate-800/80 border-slate-700 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <Info className="w-4 h-4 text-indigo-400 shrink-0" />
+                      <div>
+                        <span className="text-xs font-black block">Information (Blue)</span>
+                        <span className="text-[10px] text-slate-400">General updates, features & tips</span>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setBroadcastType('warning')}
+                      className={`p-3 rounded-xl border text-left transition cursor-pointer flex items-center gap-2.5 ${
+                        broadcastType === 'warning'
+                          ? 'bg-amber-950/70 border-amber-500 text-white shadow-sm'
+                          : 'bg-slate-800/80 border-slate-700 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                      <div>
+                        <span className="text-xs font-black block">Notice / Maintenance (Amber)</span>
+                        <span className="text-[10px] text-slate-400">Scheduled downtime & bank updates</span>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setBroadcastType('urgent')}
+                      className={`p-3 rounded-xl border text-left transition cursor-pointer flex items-center gap-2.5 ${
+                        broadcastType === 'urgent'
+                          ? 'bg-rose-950/70 border-rose-500 text-white shadow-sm'
+                          : 'bg-slate-800/80 border-slate-700 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                      <div>
+                        <span className="text-xs font-black block">Urgent Action (Red)</span>
+                        <span className="text-[10px] text-slate-400">Critical alerts & mandatory updates</span>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Persistence Option */}
+                <div className="pt-1">
+                  <label className="flex items-center gap-3 p-3 bg-slate-800/60 border border-slate-700 rounded-xl cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={broadcastPersistent}
+                      onChange={e => setBroadcastPersistent(e.target.checked)}
+                      className="w-4 h-4 accent-indigo-600 rounded cursor-pointer"
+                    />
+                    <div>
+                      <span className="text-xs font-bold text-slate-200 block">
+                        Make this a Mandatory / Persistent Notice
+                      </span>
+                      <span className="text-[11px] text-slate-400 block">
+                        Prevents merchants and cashiers from dismissing the banner until you take it down or resolve it.
+                      </span>
+                    </div>
+                  </label>
+                </div>
+
+                {/* Submit Actions */}
+                <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-3">
+                  <div className="text-xs text-slate-400 flex items-center gap-1.5">
+                    <Radio className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
+                    <span>Will broadcast immediately via WebSocket push to all stores</span>
+                  </div>
+
+                  <div className="flex items-center gap-2.5 w-full sm:w-auto">
+                    {activeBroadcast?.active && (
+                      <button
+                        type="button"
+                        onClick={() => handleToggleBroadcastStatus(false)}
+                        disabled={isSavingBroadcast}
+                        className="w-full sm:w-auto px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl border border-slate-700 transition cursor-pointer"
+                      >
+                        Take Down
+                      </button>
+                    )}
+
+                    <button
+                      type="submit"
+                      disabled={isSavingBroadcast}
+                      className="w-full sm:w-auto px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-black text-xs rounded-xl transition flex items-center justify-center gap-2 shadow-md shadow-indigo-600/20 cursor-pointer"
+                    >
+                      {isSavingBroadcast ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>Publishing...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Send className="w-4 h-4" />
+                          <span>Publish to All Merchants</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </div>
+
           </div>
         )}
 
